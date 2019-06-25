@@ -2,8 +2,8 @@ package oas3
 
 import (
 	"encoding/json"
-	"github.com/brockmeyertyler/oas3models"
 	"github.com/gorilla/mux"
+	"github.com/tjbrockmeyer/oas3models"
 	"log"
 	"net/http"
 	"strings"
@@ -23,7 +23,6 @@ type endpointSettings struct {
 	responseHandlers []func(req *http.Request, res *Response)
 }
 
-
 func NewEndpoint(method oas3models.HTTPVerb, path, summary, description string, tags []string) *Endpoint {
 	return &Endpoint{
 		settings: &endpointSettings{
@@ -33,13 +32,13 @@ func NewEndpoint(method oas3models.HTTPVerb, path, summary, description string, 
 			responseHandlers: make([]func(req *http.Request, res *Response), 2),
 		},
 		Doc: &oas3models.OperationDoc{
-			Tags: tags,
-			Summary: summary,
+			Tags:        tags,
+			Summary:     summary,
 			Description: description,
 			OperationId: string(method) + strings.ReplaceAll(path, "/", "_"),
-			Parameters: make([]*oas3models.ParameterDoc, 2),
-			Responses: &oas3models.ResponsesDoc{},
-			Security: make([]*oas3models.SecurityRequirementDoc, 1),
+			Parameters:  make([]*oas3models.ParameterDoc, 2),
+			Responses:   &oas3models.ResponsesDoc{},
+			Security:    make([]*oas3models.SecurityRequirementDoc, 1),
 		},
 	}
 }
@@ -81,7 +80,7 @@ func (e *Endpoint) Deprecate(comment string) *Endpoint {
 // Attach a security doc
 func (e *Endpoint) Security(name string, scopes ...string) *Endpoint {
 	e.Doc.Security = append(e.Doc.Security, &oas3models.SecurityRequirementDoc{
-		Name: name,
+		Name:   name,
 		Scopes: scopes,
 	})
 	return e
@@ -107,7 +106,7 @@ func (e *Endpoint) ResponseHandler(rh func(*http.Request, *Response)) *Endpoint 
 
 // Attach a function to run when calling this endpoint
 // If an error is caught, run the following: `return oas3.Response{Error: err}`
-func (e *Endpoint) Func(f func(r *http.Request)*Response) *Endpoint {
+func (e *Endpoint) Func(f func(r *http.Request) *Response) *Endpoint {
 	e.settings.run = f
 	return e
 }
@@ -138,4 +137,3 @@ func (e *Endpoint) run(w http.ResponseWriter, r *http.Request) {
 		log.Printf("endpoint error (%s %s) at write response: %s", e.settings.method, e.settings.path, err)
 	}
 }
-
