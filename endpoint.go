@@ -139,20 +139,24 @@ func (e *Endpoint) Func(f func(r *http.Request) *Response) *Endpoint {
 
 func (e *Endpoint) run(w http.ResponseWriter, r *http.Request) {
 	res := e.settings.run(r)
+
 	if res.Error != nil {
 		res.Body = errorToJSON(res.Error)
+		res.Status = 500
+	} else if res.Status == 0 {
+		res.Status = 200
 	}
+
 	for _, rh := range e.settings.responseHandlers {
 		rh(r, res)
 	}
 	if res.Error != nil {
-		log.Printf("endpoint error (%s %s) at run: %s", e.settings.method, e.settings.path, res.Error)
+		log.Printf("endpoint error (%s %s) at runtime: %s", e.settings.method, e.settings.path, res.Error)
 	}
 
 	var b []byte
 	var err error
-	b, err = json.Marshal(res.Body)
-	if err != nil {
+	if b, err = json.Marshal(res.Body); err != nil {
 		log.Printf("endpoint error (%s %s) at marshal body: %s\n\tobject: %v",
 			e.settings.method, e.settings.path, err, res.Body)
 		res.Status = 500

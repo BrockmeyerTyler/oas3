@@ -48,13 +48,10 @@ func (o *OpenAPI3) SwaggerDocs(route *mux.Route, projectSwaggerDir string) *Open
 	}
 	route.Handler(http.StripPrefix(path, http.FileServer(http.Dir(projectSwaggerDir))))
 
-	b, err := json.Marshal(o.Doc)
-	if err != nil {
-		panic(err)
-	}
-	err = ioutil.WriteFile(projectSwaggerDir+"/spec.json", b, 0644)
-	if err != nil {
-		panic(err)
+	if b, err := json.Marshal(o.Doc); err != nil {
+		panic("could not marshal Open API 3 spec: " + err.Error())
+	} else if err = ioutil.WriteFile(projectSwaggerDir+"/spec.json", b, 0644); err != nil {
+		panic("could not write Open API 3 spec to " + projectSwaggerDir + ": " + err.Error())
 	}
 	return o
 }
