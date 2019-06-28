@@ -38,10 +38,10 @@ func NewEndpoint(method string, path, summary, description string, tags ...strin
 			Description: description,
 			OperationId: string(method) + strings.ReplaceAll(path, "/", "_"),
 			Parameters:  make([]*oas3models.ParameterDoc, 0, 2),
-			Responses:   &oas3models.ResponsesDoc{
-				Codes:   make(map[int]*oas3models.ResponseDoc),
+			Responses: &oas3models.ResponsesDoc{
+				Codes: make(map[int]*oas3models.ResponseDoc),
 			},
-			Security:    make([]*oas3models.SecurityRequirementDoc, 0, 1),
+			Security: make([]*oas3models.SecurityRequirementDoc, 0, 1),
 		},
 	}
 }
@@ -54,23 +54,23 @@ func (e *Endpoint) Version(version int) *Endpoint {
 	return e
 }
 
-// Attach a parameter doc
-func (e *Endpoint) Parameter(name, description string, in oas3models.InRequest, required bool, schema interface{}) *Endpoint {
+// Attach a parameter doc.
+func (e *Endpoint) Parameter(in oas3models.InRequest, name, description string, required bool, schema interface{}) *Endpoint {
 	e.Doc.Parameters = append(e.Doc.Parameters, &oas3models.ParameterDoc{
-		Name: name,
+		Name:        name,
 		Description: description,
-		In: in,
-		Required: required,
-		Schema: schema,
+		In:          in,
+		Required:    required,
+		Schema:      schema,
 	})
 	return e
 }
 
-// Attach a request body doc
+// Attach a request body doc.
 func (e *Endpoint) RequestBody(description string, required bool, schema interface{}) *Endpoint {
 	e.Doc.RequestBody = &oas3models.RequestBodyDoc{
 		Description: description,
-		Required: required,
+		Required:    required,
 		Content: oas3models.MediaTypesDoc{
 			oas3models.MimeJson: {Schema: schema},
 		},
@@ -78,7 +78,7 @@ func (e *Endpoint) RequestBody(description string, required bool, schema interfa
 	return e
 }
 
-// Attach a response doc
+// Attach a response doc. Schema may be nil.
 func (e *Endpoint) Response(code int, description string, schema interface{}) *Endpoint {
 	r := &oas3models.ResponseDoc{
 		Description: description,
@@ -94,6 +94,7 @@ func (e *Endpoint) Response(code int, description string, schema interface{}) *E
 	return e
 }
 
+// Deprecate this endpoint.
 func (e *Endpoint) Deprecate(comment string) *Endpoint {
 	e.Doc.Deprecated = true
 	if comment != "" {
@@ -102,7 +103,7 @@ func (e *Endpoint) Deprecate(comment string) *Endpoint {
 	return e
 }
 
-// Attach a security doc
+// Attach a security doc.
 func (e *Endpoint) Security(name string, scopes ...string) *Endpoint {
 	e.Doc.Security = append(e.Doc.Security, &oas3models.SecurityRequirementDoc{
 		Name:   name,
