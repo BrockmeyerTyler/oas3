@@ -1,18 +1,20 @@
 package oas3
 
 import (
+	"encoding/json"
 	"github.com/gorilla/mux"
 	"github.com/tjbrockmeyer/oas3models"
+	"io/ioutil"
+	"net/http"
 )
 
 type OpenAPI3 struct {
-	Doc       *oas3models.OpenAPIDoc
-	ApiRouter *mux.Router
+	Doc *oas3models.OpenAPIDoc
 }
 
 // Create a new specification for your API
-// This will create the endpoints in the documentation and will create a router for them.
-func NewOpenAPISpec3(title, description, version, basePath string, endpoints []*Endpoint) *OpenAPI3 {
+// This will create the endpoints in the documentation and will create routes for them.
+func NewOpenAPISpec3(title, description, version string, endpoints []*Endpoint, apiSubRouter *mux.Router) *OpenAPI3 {
 	spec := &OpenAPI3{
 		Doc: &oas3models.OpenAPIDoc{
 			OpenApi: "3.0.0",
@@ -25,7 +27,6 @@ func NewOpenAPISpec3(title, description, version, basePath string, endpoints []*
 			Tags:    make([]*oas3models.TagDoc, 0, 3),
 			Paths:   make(oas3models.PathsDoc),
 		},
-		ApiRouter: mux.NewRouter().PathPrefix(basePath).Subrouter().StrictSlash(true),
 	}
 	for _, e := range endpoints {
 		pathItem, ok := spec.Doc.Paths[e.settings.path]
@@ -35,9 +36,27 @@ func NewOpenAPISpec3(title, description, version, basePath string, endpoints []*
 			spec.Doc.Paths[e.settings.path] = pathItem
 		}
 		pathItem.Methods[oas3models.HTTPVerb(e.settings.method)] = e.Doc
-		spec.ApiRouter.Path(e.settings.path).Methods(string(e.settings.method)).HandlerFunc(e.run)
+		apiSubRouter.Path(e.settings.path).Methods(string(e.settings.method)).HandlerFunc(e.run)
 	}
 	return spec
+}
+
+func (o *OpenAPI3) SwaggerDocs(route *mux.Route, projectSwaggerDir string) *OpenAPI3 {
+	path, err := route.GetPathTemplate()
+	if err != nil {
+		panic(err)
+	}
+	route.Handler(http.StripPrefix(path, http.FileServer(http.Dir(projectSwaggerDir))))
+
+	b, err := json.Marshal(o.Doc)
+	if err != nil {
+		panic(err)
+	}
+	err = ioutil.WriteFile(projectSwaggerDir+"/spec.json", b, 0644)
+	if err != nil {
+		panic(err)
+	}
+	return o
 }
 
 // Add a server to the API
