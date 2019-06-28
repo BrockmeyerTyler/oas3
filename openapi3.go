@@ -12,7 +12,7 @@ type OpenAPI3 struct {
 
 // Create a new specification for your API
 // This will create the endpoints in the documentation and will create a router for them.
-func NewOpenAPISpec3(title, description, version string, endpoints []*Endpoint) *OpenAPI3 {
+func NewOpenAPISpec3(title, description, version, basePath string, endpoints []*Endpoint) *OpenAPI3 {
 	spec := &OpenAPI3{
 		Doc: &oas3models.OpenAPIDoc{
 			OpenApi: "3.0.0",
@@ -25,13 +25,13 @@ func NewOpenAPISpec3(title, description, version string, endpoints []*Endpoint) 
 			Tags:    make([]*oas3models.TagDoc, 0, 3),
 			Paths:   make(oas3models.PathsDoc),
 		},
-		ApiRouter: mux.NewRouter().StrictSlash(true),
+		ApiRouter: mux.NewRouter().PathPrefix(basePath).Subrouter().StrictSlash(true),
 	}
 	for _, e := range endpoints {
-		pathItem, ok := spec.Doc.Paths[e.settings.path]; if !ok {
+		pathItem, ok := spec.Doc.Paths[e.settings.path]
+		if !ok {
 			pathItem = &oas3models.PathItemDoc{
-				Methods: make(map[oas3models.HTTPVerb]*oas3models.OperationDoc,
-			)}
+				Methods: make(map[oas3models.HTTPVerb]*oas3models.OperationDoc)}
 			spec.Doc.Paths[e.settings.path] = pathItem
 		}
 		pathItem.Methods[oas3models.HTTPVerb(e.settings.method)] = e.Doc
