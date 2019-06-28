@@ -16,29 +16,32 @@ type Endpoint struct {
 
 type endpointSettings struct {
 	path             string
-	method           oas3models.HTTPVerb
+	method           string
 	run              func(r *http.Request) *Response
 	version          int
 	middleware       []mux.MiddlewareFunc
 	responseHandlers []func(req *http.Request, res *Response)
 }
 
-func NewEndpoint(method oas3models.HTTPVerb, path, summary, description string, tags []string) *Endpoint {
+// Create a new endpoint for your API, supplying the mandatory arguments as necessary.
+func NewEndpoint(method string, path, summary, description string, tags ...string) *Endpoint {
 	return &Endpoint{
 		settings: &endpointSettings{
-			method:           method,
+			method:           strings.ToLower(method),
 			path:             path,
-			middleware:       make([]mux.MiddlewareFunc, 2),
-			responseHandlers: make([]func(req *http.Request, res *Response), 2),
+			middleware:       make([]mux.MiddlewareFunc, 0, 2),
+			responseHandlers: make([]func(req *http.Request, res *Response), 0, 2),
 		},
 		Doc: &oas3models.OperationDoc{
 			Tags:        tags,
 			Summary:     summary,
 			Description: description,
 			OperationId: string(method) + strings.ReplaceAll(path, "/", "_"),
-			Parameters:  make([]*oas3models.ParameterDoc, 2),
-			Responses:   &oas3models.ResponsesDoc{},
-			Security:    make([]*oas3models.SecurityRequirementDoc, 1),
+			Parameters:  make([]*oas3models.ParameterDoc, 0, 2),
+			Responses:   &oas3models.ResponsesDoc{
+				Codes:   make(map[int]*oas3models.ResponseDoc),
+			},
+			Security:    make([]*oas3models.SecurityRequirementDoc, 0, 1),
 		},
 	}
 }
@@ -52,20 +55,42 @@ func (e *Endpoint) Version(version int) *Endpoint {
 }
 
 // Attach a parameter doc
-func (e *Endpoint) Parameter(doc *oas3models.ParameterDoc) *Endpoint {
-	e.Doc.Parameters = append(e.Doc.Parameters, doc)
+func (e *Endpoint) Parameter(name, description string, in oas3models.InRequest, required bool, schema interface{}) *Endpoint {
+	e.Doc.Parameters = append(e.Doc.Parameters, &oas3models.ParameterDoc{
+		Name: name,
+		Description: description,
+		In: in,
+		Required: required,
+		Schema: schema,
+	})
 	return e
 }
 
 // Attach a request body doc
-func (e *Endpoint) RequestBody(doc *oas3models.RequestBodyDoc) *Endpoint {
-	e.Doc.RequestBody = doc
+func (e *Endpoint) RequestBody(description string, required bool, schema interface{}) *Endpoint {
+	e.Doc.RequestBody = &oas3models.RequestBodyDoc{
+		Description: description,
+		Required: required,
+		Content: oas3models.MediaTypesDoc{
+			oas3models.MimeJson: {Schema: schema},
+		},
+	}
 	return e
 }
 
 // Attach a response doc
-func (e *Endpoint) Response(code int, doc *oas3models.ResponseDoc) *Endpoint {
-	e.Doc.Responses.Responses[code] = doc
+func (e *Endpoint) Response(code int, description string, schema interface{}) *Endpoint {
+	r := &oas3models.ResponseDoc{
+		Description: description,
+	}
+	if schema != nil {
+		r.Content = oas3models.MediaTypesDoc{
+			oas3models.MimeJson: {
+				Schema: schema,
+			},
+		}
+	}
+	e.Doc.Responses.Codes[code] = r
 	return e
 }
 
