@@ -104,8 +104,10 @@ func (o *OpenAPI3) NewClientCredentialsOAuth(
 // The schema file should have a top-most "definitions" property,
 // and the names contained within will be added directly into #/components/schemas.
 // They will be prepended by 'prefix' before creation.
-func (o *OpenAPI3) AddSchemaFile(filepath, prefix string) error {
-	contents, err := ioutil.ReadFile(filepath)
+//
+// - specsDir should be the directory that will contain your generated spec.
+func (o *OpenAPI3) AddSchemaFile(specsDir, filename, prefix string) error {
+	contents, err := ioutil.ReadFile(fmt.Sprintf("%s/%s", specsDir, filename))
 	if err != nil {
 		return err
 	}
@@ -120,7 +122,6 @@ func (o *OpenAPI3) AddSchemaFile(filepath, prefix string) error {
 	if !ok {
 		return fmt.Errorf("schema files must contain a top-level 'definitions' property")
 	}
-
 	defsMap, ok := defs.(map[string]interface{})
 	if !ok {
 		return fmt.Errorf("'definitions' property of schema files must be an object")
@@ -130,32 +131,35 @@ func (o *OpenAPI3) AddSchemaFile(filepath, prefix string) error {
 		o.Components.Schemas = make(map[string]interface{})
 	}
 	for name := range defsMap {
-		o.Components.Schemas[name] = Ref(fmt.Sprintf("%s#/definitions/%s%s", filepath, prefix, name))
+		o.Components.Schemas[name] = Ref(fmt.Sprintf("%s#/definitions/%s%s", filename, prefix, name))
 	}
 	return nil
 }
 
 // Publish your API using a Swagger UI. Writes your spec to the specified file.
+//
+// - specPath should be the path to where your spec will be generated from within your public swagger directory.
+//
 // This method should be called LAST!
-func (o *OpenAPI3) PublishSwaggerUI(route *mux.Route, localSwaggerDir, specName string) error {
+func (o *OpenAPI3) PublishSwaggerUI(route *mux.Route, publicSwaggerDir, specPath string) error {
 	path, err := route.GetPathTemplate()
 	if err != nil {
 		return fmt.Errorf("failed to get path for provided Swagger route: %s", err.Error())
 	}
-	route.Handler(http.StripPrefix(path, http.FileServer(http.Dir(localSwaggerDir))))
+	route.Handler(http.StripPrefix(path, http.FileServer(http.Dir(publicSwaggerDir))))
 
 	if b, err := json.Marshal(o); err != nil {
 		return fmt.Errorf("could not marshal Open API 3 spec: %s", err.Error())
-	} else if err = ioutil.WriteFile(fmt.Sprintf("%s/%s", localSwaggerDir, specName), b, 0644); err != nil {
-		return fmt.Errorf("could not write Open API 3 spec to %s: %s", localSwaggerDir, err.Error())
+	} else if err = ioutil.WriteFile(fmt.Sprintf("%s/%s", publicSwaggerDir, specPath), b, 0644); err != nil {
+		return fmt.Errorf("could not write Open API 3 spec to %s: %s", publicSwaggerDir, err.Error())
 	}
 
-	indexHtml := fmt.Sprintf("%s/index.html", localSwaggerDir)
+	indexHtml := fmt.Sprintf("%s/index.html", publicSwaggerDir)
 	if contents, err := ioutil.ReadFile(indexHtml); err != nil {
 		return fmt.Errorf("could not open 'index.html' in swagger directory: %s", err.Error())
 	} else {
 		regex, _ := regexp.Compile(`url: ?(".*?"|'.*?')`)
-		newContents := regex.ReplaceAllLiteral(contents, []byte(fmt.Sprintf(`url: "./%s"`, specName)))
+		newContents := regex.ReplaceAllLiteral(contents, []byte(fmt.Sprintf(`url: "./%s"`, specPath)))
 		err := ioutil.WriteFile(indexHtml, newContents, 644)
 		if err != nil {
 			return err
