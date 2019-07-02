@@ -6,8 +6,19 @@ import (
 	"strconv"
 )
 
+// A reference object
 func Ref(to string) json.RawMessage {
 	return []byte(fmt.Sprintf(`{"$ref": %s}`, strconv.Quote(to)))
+}
+
+// A reference to a schema in this document
+func SchemaRef(to string) json.RawMessage {
+	return []byte(fmt.Sprintf(`{"$ref": #/components/schemas/%s}`, strconv.Quote(to)))
+}
+
+// A reference to any component in this document
+func CompRef(to string) json.RawMessage {
+	return []byte(fmt.Sprintf(`{"$ref": #/components/%s`, strconv.Quote(to)))
 }
 
 func errorToJSON(err error) json.RawMessage {
