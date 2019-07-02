@@ -142,6 +142,9 @@ func (o *OpenAPI3) AddSchemaFile(filepath, prefix string) error {
 		return fmt.Errorf("'definitions' property of schema files must be an object")
 	}
 
+	if o.Components.Schemas == nil {
+		o.Components.Schemas = make(map[string]interface{})
+	}
 	for name := range defsMap {
 		o.Components.Schemas[name] = Ref(fmt.Sprintf("%s#/definitions/%s%s", filepath, prefix, name))
 	}
