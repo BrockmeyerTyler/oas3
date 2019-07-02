@@ -66,6 +66,7 @@ func (o *OpenAPI3) SecurityRequirement(name string, scopes ...string) *OpenAPI3 
 	return o
 }
 
+// Create a new security scheme of API key
 func (o *OpenAPI3) NewAPIKey(name, description, headerName string) *OpenAPI3 {
 	if o.Components.SecuritySchemes == nil {
 		o.Components.SecuritySchemes = make(map[string]*oas3models.SecuritySchemeDoc)
@@ -78,6 +79,7 @@ func (o *OpenAPI3) NewAPIKey(name, description, headerName string) *OpenAPI3 {
 	return o
 }
 
+// Create a new security scheme of clientCredentials.
 func (o *OpenAPI3) NewClientCredentialsOAuth(
 	name, description, tokenUrl, refreshUrl string,
 	scopes map[string]string) *OpenAPI3 {
@@ -99,17 +101,49 @@ func (o *OpenAPI3) NewClientCredentialsOAuth(
 }
 
 // Mount your local Swagger UI at the route specified by 'route'.
-func (o *OpenAPI3) SwaggerDocs(route *mux.Route, projectSwaggerDir string) (*OpenAPI3, error) {
+func (o *OpenAPI3) SwaggerDocs(route *mux.Route, projectSwaggerDir string) error {
 	path, err := route.GetPathTemplate()
 	if err != nil {
-		return o, fmt.Errorf("failed to get path for provided Swagger route: %s", err.Error())
+		return fmt.Errorf("failed to get path for provided Swagger route: %s", err.Error())
 	}
 	route.Handler(http.StripPrefix(path, http.FileServer(http.Dir(projectSwaggerDir))))
 
 	if b, err := json.Marshal(o); err != nil {
-		return o, fmt.Errorf("could not marshal Open API 3 spec: %s", err.Error())
+		return fmt.Errorf("could not marshal Open API 3 spec: %s", err.Error())
 	} else if err = ioutil.WriteFile(projectSwaggerDir+"/spec.json", b, 0644); err != nil {
-		return o, fmt.Errorf("could not write Open API 3 spec to %s: %s", projectSwaggerDir, err.Error())
+		return fmt.Errorf("could not write Open API 3 spec to %s: %s", projectSwaggerDir, err.Error())
 	}
-	return o, nil
+	return nil
+}
+
+// Add a schema file to your documentation.
+// The schema file should have a top-most "definitions" property,
+// and the names contained within will be added directly into #/components/schemas.
+// They will be prepended by 'prefix' before creation.
+func (o *OpenAPI3) AddSchemaFile(filepath, prefix string) error {
+	contents, err := ioutil.ReadFile(filepath)
+	if err != nil {
+		return err
+	}
+
+	var file map[string]interface{}
+	err = json.Unmarshal(contents, &file)
+	if err != nil {
+		return err
+	}
+
+	defs, ok := file["definitions"]
+	if !ok {
+		return fmt.Errorf("schema files must contain a top-level 'definitions' property")
+	}
+
+	defsMap, ok := defs.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("'definitions' property of schema files must be an object")
+	}
+
+	for name := range defsMap {
+		o.Components.Schemas[name] = Ref(fmt.Sprintf("%s#/definitions/%s%s", filepath, prefix, name))
+	}
+	return nil
 }
