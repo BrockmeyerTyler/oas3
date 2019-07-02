@@ -7,6 +7,7 @@ import (
 	"github.com/tjbrockmeyer/oas3models"
 	"io/ioutil"
 	"net/http"
+	"regexp"
 )
 
 type OpenAPI3 oas3models.OpenAPIDoc
@@ -99,22 +100,6 @@ func (o *OpenAPI3) NewClientCredentialsOAuth(
 	return o
 }
 
-// Mount your local Swagger UI at the route specified by 'route'.
-func (o *OpenAPI3) SwaggerDocs(route *mux.Route, projectSwaggerDir string) error {
-	path, err := route.GetPathTemplate()
-	if err != nil {
-		return fmt.Errorf("failed to get path for provided Swagger route: %s", err.Error())
-	}
-	route.Handler(http.StripPrefix(path, http.FileServer(http.Dir(projectSwaggerDir))))
-
-	if b, err := json.Marshal(o); err != nil {
-		return fmt.Errorf("could not marshal Open API 3 spec: %s", err.Error())
-	} else if err = ioutil.WriteFile(projectSwaggerDir+"/spec.json", b, 0644); err != nil {
-		return fmt.Errorf("could not write Open API 3 spec to %s: %s", projectSwaggerDir, err.Error())
-	}
-	return nil
-}
-
 // Add a schema file to your documentation.
 // The schema file should have a top-most "definitions" property,
 // and the names contained within will be added directly into #/components/schemas.
@@ -146,6 +131,35 @@ func (o *OpenAPI3) AddSchemaFile(filepath, prefix string) error {
 	}
 	for name := range defsMap {
 		o.Components.Schemas[name] = Ref(fmt.Sprintf("%s#/definitions/%s%s", filepath, prefix, name))
+	}
+	return nil
+}
+
+// Publish your API using a Swagger UI. Writes your spec to the specified file.
+// This method should be called LAST!
+func (o *OpenAPI3) PublishSwaggerUI(route *mux.Route, localSwaggerDir, specName string) error {
+	path, err := route.GetPathTemplate()
+	if err != nil {
+		return fmt.Errorf("failed to get path for provided Swagger route: %s", err.Error())
+	}
+	route.Handler(http.StripPrefix(path, http.FileServer(http.Dir(localSwaggerDir))))
+
+	if b, err := json.Marshal(o); err != nil {
+		return fmt.Errorf("could not marshal Open API 3 spec: %s", err.Error())
+	} else if err = ioutil.WriteFile(fmt.Sprintf("%s/%s", localSwaggerDir, specName), b, 0644); err != nil {
+		return fmt.Errorf("could not write Open API 3 spec to %s: %s", localSwaggerDir, err.Error())
+	}
+
+	indexHtml := fmt.Sprintf("%s/index.html", localSwaggerDir)
+	if contents, err := ioutil.ReadFile(indexHtml); err != nil {
+		return fmt.Errorf("could not open 'index.html' in swagger directory: %s", err.Error())
+	} else {
+		regex, _ := regexp.Compile(`url: ?(".*?"|'.*?')`)
+		newContents := regex.ReplaceAllLiteral(contents, []byte(fmt.Sprintf(`url: "./%s"`, specName)))
+		err := ioutil.WriteFile(indexHtml, newContents, 644)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
