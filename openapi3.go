@@ -96,7 +96,6 @@ func (o *OpenAPI3) NewClientCredentialsOAuth(
 			},
 		},
 	}
-	fmt.Println(o.Components.SecuritySchemes[name])
 	return o
 }
 

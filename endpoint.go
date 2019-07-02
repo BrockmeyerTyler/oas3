@@ -2,7 +2,6 @@ package oas3
 
 import (
 	"encoding/json"
-	"fmt"
 	"github.com/gorilla/mux"
 	"github.com/tjbrockmeyer/oas3models"
 	"log"
@@ -168,7 +167,6 @@ func (e *Endpoint) run(w http.ResponseWriter, r *http.Request) {
 		b = errorToJSON(err)
 	}
 
-	fmt.Printf("b: {%v}\n", b)
 	w.WriteHeader(res.Status)
 	if _, err = w.Write(b); err != nil {
 		log.Printf("endpoint error (%s %s) at write response: %s", e.settings.method, e.settings.path, err)
