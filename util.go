@@ -13,12 +13,12 @@ func Ref(to string) json.RawMessage {
 
 // A reference to a schema in this document
 func SchemaRef(to string) json.RawMessage {
-	return []byte(fmt.Sprintf(`{"$ref": #/components/schemas/%s}`, strconv.Quote(to)))
+	return Ref(fmt.Sprintf("#/components/schemas/%s", to))
 }
 
 // A reference to any component in this document
 func CompRef(to string) json.RawMessage {
-	return []byte(fmt.Sprintf(`{"$ref": #/components/%s`, strconv.Quote(to)))
+	return Ref(fmt.Sprintf("#/components/%s", to))
 }
 
 func errorToJSON(err error) json.RawMessage {
