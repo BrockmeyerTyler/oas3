@@ -8,7 +8,7 @@ import (
 
 // A reference object
 func Ref(to string) json.RawMessage {
-	return []byte(fmt.Sprintf(`{"$ref": %s}`, strconv.Quote(to)))
+	return []byte(fmt.Sprintf(`{"$ref":%s}`, strconv.Quote(to)))
 }
 
 // A reference to a schema in this document

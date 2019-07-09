@@ -28,14 +28,14 @@ func NewOpenAPISpec3(title, description, version string, endpoints []*Endpoint, 
 		Components: &oas3models.ComponentsDoc{},
 	}
 	for _, e := range endpoints {
-		pathItem, ok := spec.Paths[e.settings.path]
+		pathItem, ok := spec.Paths[e.Settings.Path]
 		if !ok {
 			pathItem = &oas3models.PathItemDoc{
 				Methods: make(map[oas3models.HTTPVerb]*oas3models.OperationDoc)}
-			spec.Paths[e.settings.path] = pathItem
+			spec.Paths[e.Settings.Path] = pathItem
 		}
-		pathItem.Methods[oas3models.HTTPVerb(e.settings.method)] = e.Doc
-		apiSubRouter.Path(e.settings.path).Methods(string(e.settings.method)).HandlerFunc(e.run)
+		pathItem.Methods[oas3models.HTTPVerb(e.Settings.Method)] = e.Doc
+		apiSubRouter.Path(e.Settings.Path).Methods(string(e.Settings.Method)).HandlerFunc(e.Run)
 	}
 	return spec
 }

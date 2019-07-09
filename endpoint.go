@@ -2,6 +2,7 @@ package oas3
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/gorilla/mux"
 	"github.com/tjbrockmeyer/oas3models"
 	"log"
@@ -10,33 +11,33 @@ import (
 )
 
 type Endpoint struct {
-	settings *endpointSettings
+	Settings *endpointSettings
 	Doc      *oas3models.OperationDoc
 }
 
 type endpointSettings struct {
-	path             string
-	method           string
-	run              func(r *http.Request) *Response
-	version          int
-	middleware       []mux.MiddlewareFunc
-	responseHandlers []func(req *http.Request, res *Response)
+	Path             string
+	Method           string
+	Run              func(r *http.Request) *Response
+	Version          int
+	Middleware       []mux.MiddlewareFunc
+	ResponseHandlers []func(req *http.Request, res *Response)
 }
 
 // Create a new endpoint for your API, supplying the mandatory arguments as necessary.
 func NewEndpoint(method string, path, summary, description string, tags ...string) *Endpoint {
 	return &Endpoint{
-		settings: &endpointSettings{
-			method:           strings.ToLower(method),
-			path:             path,
-			middleware:       make([]mux.MiddlewareFunc, 0, 2),
-			responseHandlers: make([]func(req *http.Request, res *Response), 0, 2),
+		Settings: &endpointSettings{
+			Method:           strings.ToLower(method),
+			Path:             path,
+			Middleware:       make([]mux.MiddlewareFunc, 0, 2),
+			ResponseHandlers: make([]func(req *http.Request, res *Response), 0, 2),
 		},
 		Doc: &oas3models.OperationDoc{
 			Tags:        tags,
 			Summary:     summary,
 			Description: description,
-			OperationId: string(method) + strings.ReplaceAll(path, "/", "_"),
+			OperationId: fmt.Sprintf("%s%s", method, strings.ReplaceAll(path, "/", "_")),
 			Parameters:  make([]*oas3models.ParameterDoc, 0, 2),
 			Responses: &oas3models.ResponsesDoc{
 				Codes: make(map[int]*oas3models.ResponseDoc),
@@ -48,9 +49,9 @@ func NewEndpoint(method string, path, summary, description string, tags ...strin
 
 // Set the version of this endpoint, updating the path to correspond to it
 func (e *Endpoint) Version(version int) *Endpoint {
-	e.Doc.OperationId += "_v" + string(version)
-	e.settings.path += "/v" + string(version)
-	e.settings.version = version
+	e.Doc.OperationId += fmt.Sprintf("_v%v", version)
+	e.Settings.Path += fmt.Sprintf("/v%v", version)
+	e.Settings.Version = version
 	return e
 }
 
@@ -116,7 +117,7 @@ func (e *Endpoint) Security(name string, scopes ...string) *Endpoint {
 // Middleware is run before the endpoint function is called.
 // This is a good place for authorization and logging.
 func (e *Endpoint) Middleware(mdw mux.MiddlewareFunc) *Endpoint {
-	e.settings.middleware = append(e.settings.middleware, mdw)
+	e.Settings.Middleware = append(e.Settings.Middleware, mdw)
 	return e
 }
 
@@ -126,19 +127,19 @@ func (e *Endpoint) Middleware(mdw mux.MiddlewareFunc) *Endpoint {
 // They have the ability to view and modify the response before sending it.
 // If there was an error, setting `res.Error` to `nil` will keep from printing it out.
 func (e *Endpoint) ResponseHandler(rh func(*http.Request, *Response)) *Endpoint {
-	e.settings.responseHandlers = append(e.settings.responseHandlers, rh)
+	e.Settings.ResponseHandlers = append(e.Settings.ResponseHandlers, rh)
 	return e
 }
 
 // Attach a function to run when calling this endpoint
 // If an error is caught, run the following: `return oas3.Response{Error: err}`
 func (e *Endpoint) Func(f func(r *http.Request) *Response) *Endpoint {
-	e.settings.run = f
+	e.Settings.Run = f
 	return e
 }
 
-func (e *Endpoint) run(w http.ResponseWriter, r *http.Request) {
-	res := e.settings.run(r)
+func (e *Endpoint) Run(w http.ResponseWriter, r *http.Request) {
+	res := e.Settings.Run(r)
 
 	if res.Error != nil {
 		res.Body = errorToJSON(res.Error)
@@ -147,11 +148,11 @@ func (e *Endpoint) run(w http.ResponseWriter, r *http.Request) {
 		res.Status = 200
 	}
 
-	for _, rh := range e.settings.responseHandlers {
+	for _, rh := range e.Settings.ResponseHandlers {
 		rh(r, res)
 	}
 	if res.Error != nil {
-		log.Printf("endpoint error (%s %s) at runtime: %s", e.settings.method, e.settings.path, res.Error)
+		log.Printf("endpoint error (%s %s) at runtime: %s", e.Settings.Method, e.Settings.Path, res.Error)
 	}
 	if res.Body == nil {
 		w.WriteHeader(res.Status)
@@ -162,13 +163,13 @@ func (e *Endpoint) run(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if b, err = json.Marshal(res.Body); err != nil {
 		log.Printf("endpoint error (%s %s) at marshal body: %s\n\tobject: %v",
-			e.settings.method, e.settings.path, err, res.Body)
+			e.Settings.Method, e.Settings.Path, err, res.Body)
 		res.Status = 500
 		b = errorToJSON(err)
 	}
 
 	w.WriteHeader(res.Status)
 	if _, err = w.Write(b); err != nil {
-		log.Printf("endpoint error (%s %s) at write response: %s", e.settings.method, e.settings.path, err)
+		log.Printf("endpoint error (%s %s) at write response: %s", e.Settings.Method, e.Settings.Path, err)
 	}
 }
