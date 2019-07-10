@@ -288,49 +288,49 @@ func TestEndpoint_Run(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	e.Func(func(r *http.Request) *Response {
-		return &Response{Error: fmt.Errorf("this is an error")}
+		return &Response{Error: fmt.Errorf(`this is a test "error"`)}
 	})
 	e.Run(w, r)
 	if w.Code != 500 {
 		t.Errorf("Expected response code during an error to have a status code of 500")
 	}
 	b, _ = ioutil.ReadAll(w.Body)
-	expectedBody := `{"message":"Internal Server Error","details":"this is an error"}`
+	expectedBody := `{"message":"Internal Server Error","details":"this is a test \"error\""}`
 	if string(b) != expectedBody {
 		t.Errorf("Expected response body during an error (%s) to be equal to %s", b, expectedBody)
 	}
 }
 
-// openapi3.go
+// openapi.go
 
-func TestNewOpenAPISpec3(t *testing.T) {
-
-}
-
-func TestOpenAPI3_Tag(t *testing.T) {
+func TestNewOpenAPI(t *testing.T) {
 
 }
 
-func TestOpenAPI3_Server(t *testing.T) {
+func TestOpenAPI_Tag(t *testing.T) {
 
 }
 
-func TestOpenAPI3_SecurityRequirement(t *testing.T) {
+func TestOpenAPI_Server(t *testing.T) {
 
 }
 
-func TestOpenAPI3_NewAPIKey(t *testing.T) {
+func TestOpenAPI_SecurityRequirement(t *testing.T) {
 
 }
 
-func TestOpenAPI3_NewClientCredentialsOAuth(t *testing.T) {
+func TestOpenAPI_NewAPIKey(t *testing.T) {
 
 }
 
-func TestOpenAPI3_AddSchemaFile(t *testing.T) {
+func TestOpenAPI_NewClientCredentialsOAuth(t *testing.T) {
 
 }
 
-func TestOpenAPI3_PublishSwaggerUI(t *testing.T) {
+func TestOpenAPI_AddSchemaFile(t *testing.T) {
+
+}
+
+func TestOpenAPI_PublishSwaggerUI(t *testing.T) {
 
 }
