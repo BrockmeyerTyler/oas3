@@ -1,40 +1,40 @@
-package oas3
+package oas
 
 import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
-	"github.com/tjbrockmeyer/oas3models"
+	"github.com/tjbrockmeyer/oasm"
 	"io/ioutil"
 	"net/http"
 	"regexp"
 )
 
-type OpenAPI3 oas3models.OpenAPIDoc
+type OpenAPI3 oasm.OpenAPIDoc
 
 // Create a new specification for your API
 // This will create the endpoints in the documentation and will create routes for them.
 func NewOpenAPISpec3(title, description, version string, endpoints []*Endpoint, apiSubRouter *mux.Router) *OpenAPI3 {
 	spec := &OpenAPI3{
 		OpenApi: "3.0.0",
-		Info: &oas3models.InfoDoc{
+		Info: &oasm.InfoDoc{
 			Title:       title,
 			Description: description,
 			Version:     version,
 		},
-		Servers:    make([]*oas3models.ServerDoc, 0, 1),
-		Tags:       make([]*oas3models.TagDoc, 0, 3),
-		Paths:      make(oas3models.PathsDoc),
-		Components: &oas3models.ComponentsDoc{},
+		Servers:    make([]*oasm.ServerDoc, 0, 1),
+		Tags:       make([]*oasm.TagDoc, 0, 3),
+		Paths:      make(oasm.PathsDoc),
+		Components: &oasm.ComponentsDoc{},
 	}
 	for _, e := range endpoints {
 		pathItem, ok := spec.Paths[e.Settings.Path]
 		if !ok {
-			pathItem = &oas3models.PathItemDoc{
-				Methods: make(map[oas3models.HTTPVerb]*oas3models.OperationDoc)}
+			pathItem = &oasm.PathItemDoc{
+				Methods: make(map[oasm.HTTPVerb]*oasm.OperationDoc)}
 			spec.Paths[e.Settings.Path] = pathItem
 		}
-		pathItem.Methods[oas3models.HTTPVerb(e.Settings.Method)] = e.Doc
+		pathItem.Methods[oasm.HTTPVerb(e.Settings.Method)] = e.Doc
 		apiSubRouter.Path(e.Settings.Path).Methods(string(e.Settings.Method)).HandlerFunc(e.Run)
 	}
 	return spec
@@ -42,7 +42,7 @@ func NewOpenAPISpec3(title, description, version string, endpoints []*Endpoint, 
 
 // Add a server to the API
 func (o *OpenAPI3) Server(url, description string) *OpenAPI3 {
-	o.Servers = append(o.Servers, &oas3models.ServerDoc{
+	o.Servers = append(o.Servers, &oasm.ServerDoc{
 		Url:         url,
 		Description: description,
 	})
@@ -51,7 +51,7 @@ func (o *OpenAPI3) Server(url, description string) *OpenAPI3 {
 
 // Add a tag to the API with a description
 func (o *OpenAPI3) Tag(name, description string) *OpenAPI3 {
-	o.Tags = append(o.Tags, &oas3models.TagDoc{
+	o.Tags = append(o.Tags, &oasm.TagDoc{
 		Name:        name,
 		Description: description,
 	})
@@ -60,7 +60,7 @@ func (o *OpenAPI3) Tag(name, description string) *OpenAPI3 {
 
 // Add global security requirements for the API
 func (o *OpenAPI3) SecurityRequirement(name string, scopes ...string) *OpenAPI3 {
-	o.Security = append(o.Security, &oas3models.SecurityRequirementDoc{
+	o.Security = append(o.Security, &oasm.SecurityRequirementDoc{
 		Name:   name,
 		Scopes: scopes,
 	})
@@ -70,9 +70,9 @@ func (o *OpenAPI3) SecurityRequirement(name string, scopes ...string) *OpenAPI3 
 // Create a new security scheme of API key
 func (o *OpenAPI3) NewAPIKey(name, description, headerName string) *OpenAPI3 {
 	if o.Components.SecuritySchemes == nil {
-		o.Components.SecuritySchemes = make(map[string]*oas3models.SecuritySchemeDoc)
+		o.Components.SecuritySchemes = make(map[string]*oasm.SecuritySchemeDoc)
 	}
-	o.Components.SecuritySchemes[name] = &oas3models.SecuritySchemeDoc{
+	o.Components.SecuritySchemes[name] = &oasm.SecuritySchemeDoc{
 		Type: "apiKey",
 		In:   "header",
 		Name: headerName,
@@ -85,11 +85,11 @@ func (o *OpenAPI3) NewClientCredentialsOAuth(
 	name, description, tokenUrl, refreshUrl string,
 	scopes map[string]string) *OpenAPI3 {
 	if o.Components.SecuritySchemes == nil {
-		o.Components.SecuritySchemes = make(map[string]*oas3models.SecuritySchemeDoc)
+		o.Components.SecuritySchemes = make(map[string]*oasm.SecuritySchemeDoc)
 	}
-	o.Components.SecuritySchemes[name] = &oas3models.SecuritySchemeDoc{
+	o.Components.SecuritySchemes[name] = &oasm.SecuritySchemeDoc{
 		Type: "oauth2",
-		Flows: map[oas3models.OAuthFlowType]*oas3models.OAuthFlowDoc{
+		Flows: map[oasm.OAuthFlowType]*oasm.OAuthFlowDoc{
 			"clientCredentials": {
 				TokenUrl:   tokenUrl,
 				RefreshUrl: refreshUrl,

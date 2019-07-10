@@ -1,4 +1,4 @@
-package oas3
+package oas
 
 import (
 	"encoding/json"

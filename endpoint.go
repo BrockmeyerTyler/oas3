@@ -1,10 +1,10 @@
-package oas3
+package oas
 
 import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
-	"github.com/tjbrockmeyer/oas3models"
+	"github.com/tjbrockmeyer/oasm"
 	"log"
 	"net/http"
 	"strings"
@@ -12,7 +12,7 @@ import (
 
 type Endpoint struct {
 	Settings *endpointSettings
-	Doc      *oas3models.OperationDoc
+	Doc      *oasm.OperationDoc
 }
 
 type endpointSettings struct {
@@ -33,16 +33,16 @@ func NewEndpoint(method string, path, summary, description string, tags ...strin
 			Middleware:       make([]mux.MiddlewareFunc, 0, 2),
 			ResponseHandlers: make([]func(req *http.Request, res *Response), 0, 2),
 		},
-		Doc: &oas3models.OperationDoc{
+		Doc: &oasm.OperationDoc{
 			Tags:        tags,
 			Summary:     summary,
 			Description: description,
 			OperationId: fmt.Sprintf("%s%s", method, strings.ReplaceAll(path, "/", "_")),
-			Parameters:  make([]*oas3models.ParameterDoc, 0, 2),
-			Responses: &oas3models.ResponsesDoc{
-				Codes: make(map[int]*oas3models.ResponseDoc),
+			Parameters:  make([]*oasm.ParameterDoc, 0, 2),
+			Responses: &oasm.ResponsesDoc{
+				Codes: make(map[int]*oasm.ResponseDoc),
 			},
-			Security: make([]*oas3models.SecurityRequirementDoc, 0, 1),
+			Security: make([]*oasm.SecurityRequirementDoc, 0, 1),
 		},
 	}
 }
@@ -56,8 +56,8 @@ func (e *Endpoint) Version(version int) *Endpoint {
 }
 
 // Attach a parameter doc.
-func (e *Endpoint) Parameter(in oas3models.InRequest, name, description string, required bool, schema interface{}) *Endpoint {
-	e.Doc.Parameters = append(e.Doc.Parameters, &oas3models.ParameterDoc{
+func (e *Endpoint) Parameter(in oasm.InRequest, name, description string, required bool, schema interface{}) *Endpoint {
+	e.Doc.Parameters = append(e.Doc.Parameters, &oasm.ParameterDoc{
 		Name:        name,
 		Description: description,
 		In:          in,
@@ -69,11 +69,11 @@ func (e *Endpoint) Parameter(in oas3models.InRequest, name, description string, 
 
 // Attach a request body doc.
 func (e *Endpoint) RequestBody(description string, required bool, schema interface{}) *Endpoint {
-	e.Doc.RequestBody = &oas3models.RequestBodyDoc{
+	e.Doc.RequestBody = &oasm.RequestBodyDoc{
 		Description: description,
 		Required:    required,
-		Content: oas3models.MediaTypesDoc{
-			oas3models.MimeJson: {Schema: schema},
+		Content: oasm.MediaTypesDoc{
+			oasm.MimeJson: {Schema: schema},
 		},
 	}
 	return e
@@ -81,12 +81,12 @@ func (e *Endpoint) RequestBody(description string, required bool, schema interfa
 
 // Attach a response doc. Schema may be nil.
 func (e *Endpoint) Response(code int, description string, schema interface{}) *Endpoint {
-	r := &oas3models.ResponseDoc{
+	r := &oasm.ResponseDoc{
 		Description: description,
 	}
 	if schema != nil {
-		r.Content = oas3models.MediaTypesDoc{
-			oas3models.MimeJson: {
+		r.Content = oasm.MediaTypesDoc{
+			oasm.MimeJson: {
 				Schema: schema,
 			},
 		}
@@ -106,7 +106,7 @@ func (e *Endpoint) Deprecate(comment string) *Endpoint {
 
 // Attach a security doc.
 func (e *Endpoint) Security(name string, scopes ...string) *Endpoint {
-	e.Doc.Security = append(e.Doc.Security, &oas3models.SecurityRequirementDoc{
+	e.Doc.Security = append(e.Doc.Security, &oasm.SecurityRequirementDoc{
 		Name:   name,
 		Scopes: scopes,
 	})
