@@ -10,12 +10,12 @@ import (
 	"regexp"
 )
 
-type OpenAPI3 oasm.OpenAPIDoc
+type OpenAPI oasm.OpenAPIDoc
 
 // Create a new specification for your API
 // This will create the endpoints in the documentation and will create routes for them.
-func NewOpenAPISpec3(title, description, version string, endpoints []*Endpoint, apiSubRouter *mux.Router) *OpenAPI3 {
-	spec := &OpenAPI3{
+func NewOpenAPI(title, description, version string) *OpenAPI {
+	return &OpenAPI{
 		OpenApi: "3.0.0",
 		Info: &oasm.InfoDoc{
 			Title:       title,
@@ -27,21 +27,24 @@ func NewOpenAPISpec3(title, description, version string, endpoints []*Endpoint, 
 		Paths:      make(oasm.PathsDoc),
 		Components: &oasm.ComponentsDoc{},
 	}
+}
+
+func (o *OpenAPI) Endpoints(apiSubRouter *mux.Router, endpoints ...*Endpoint) *OpenAPI {
 	for _, e := range endpoints {
-		pathItem, ok := spec.Paths[e.Settings.Path]
+		pathItem, ok := o.Paths[e.Settings.Path]
 		if !ok {
 			pathItem = &oasm.PathItemDoc{
 				Methods: make(map[oasm.HTTPVerb]*oasm.OperationDoc)}
-			spec.Paths[e.Settings.Path] = pathItem
+			o.Paths[e.Settings.Path] = pathItem
 		}
 		pathItem.Methods[oasm.HTTPVerb(e.Settings.Method)] = e.Doc
 		apiSubRouter.Path(e.Settings.Path).Methods(string(e.Settings.Method)).HandlerFunc(e.Run)
 	}
-	return spec
+	return o
 }
 
 // Add a server to the API
-func (o *OpenAPI3) Server(url, description string) *OpenAPI3 {
+func (o *OpenAPI) Server(url, description string) *OpenAPI {
 	o.Servers = append(o.Servers, &oasm.ServerDoc{
 		Url:         url,
 		Description: description,
@@ -50,7 +53,7 @@ func (o *OpenAPI3) Server(url, description string) *OpenAPI3 {
 }
 
 // Add a tag to the API with a description
-func (o *OpenAPI3) Tag(name, description string) *OpenAPI3 {
+func (o *OpenAPI) Tag(name, description string) *OpenAPI {
 	o.Tags = append(o.Tags, &oasm.TagDoc{
 		Name:        name,
 		Description: description,
@@ -59,7 +62,7 @@ func (o *OpenAPI3) Tag(name, description string) *OpenAPI3 {
 }
 
 // Add global security requirements for the API
-func (o *OpenAPI3) SecurityRequirement(name string, scopes ...string) *OpenAPI3 {
+func (o *OpenAPI) SecurityRequirement(name string, scopes ...string) *OpenAPI {
 	o.Security = append(o.Security, &oasm.SecurityRequirementDoc{
 		Name:   name,
 		Scopes: scopes,
@@ -68,7 +71,7 @@ func (o *OpenAPI3) SecurityRequirement(name string, scopes ...string) *OpenAPI3 
 }
 
 // Create a new security scheme of API key
-func (o *OpenAPI3) NewAPIKey(name, description, headerName string) *OpenAPI3 {
+func (o *OpenAPI) NewAPIKey(name, description, headerName string) *OpenAPI {
 	if o.Components.SecuritySchemes == nil {
 		o.Components.SecuritySchemes = make(map[string]*oasm.SecuritySchemeDoc)
 	}
@@ -81,9 +84,9 @@ func (o *OpenAPI3) NewAPIKey(name, description, headerName string) *OpenAPI3 {
 }
 
 // Create a new security scheme of clientCredentials.
-func (o *OpenAPI3) NewClientCredentialsOAuth(
+func (o *OpenAPI) NewClientCredentialsOAuth(
 	name, description, tokenUrl, refreshUrl string,
-	scopes map[string]string) *OpenAPI3 {
+	scopes map[string]string) *OpenAPI {
 	if o.Components.SecuritySchemes == nil {
 		o.Components.SecuritySchemes = make(map[string]*oasm.SecuritySchemeDoc)
 	}
@@ -106,7 +109,7 @@ func (o *OpenAPI3) NewClientCredentialsOAuth(
 // They will be prepended by 'prefix' before creation.
 //
 // - specsDir should be the directory that will contain your generated spec.
-func (o *OpenAPI3) AddSchemaFile(specsDir, filename, prefix string) error {
+func (o *OpenAPI) AddSchemaFile(specsDir, filename, prefix string) error {
 	contents, err := ioutil.ReadFile(fmt.Sprintf("%s/%s", specsDir, filename))
 	if err != nil {
 		return err
@@ -141,7 +144,7 @@ func (o *OpenAPI3) AddSchemaFile(specsDir, filename, prefix string) error {
 // - specPath should be the path to where your spec will be generated from within your public swagger directory.
 //
 // This method should be called LAST!
-func (o *OpenAPI3) PublishSwaggerUI(route *mux.Route, publicSwaggerDir, specPath string) error {
+func (o *OpenAPI) PublishSwaggerUI(route *mux.Route, publicSwaggerDir, specPath string) error {
 	path, err := route.GetPathTemplate()
 	if err != nil {
 		return fmt.Errorf("failed to get path for provided Swagger route: %s", err.Error())

@@ -11,11 +11,11 @@ import (
 )
 
 type Endpoint struct {
-	Settings *endpointSettings
+	Settings *EndpointSettings
 	Doc      *oasm.OperationDoc
 }
 
-type endpointSettings struct {
+type EndpointSettings struct {
 	Path             string
 	Method           string
 	Run              func(r *http.Request) *Response
@@ -25,9 +25,9 @@ type endpointSettings struct {
 }
 
 // Create a new endpoint for your API, supplying the mandatory arguments as necessary.
-func NewEndpoint(method string, path, summary, description string, tags ...string) *Endpoint {
+func NewEndpoint(method, path, summary, description string, tags ...string) *Endpoint {
 	return &Endpoint{
-		Settings: &endpointSettings{
+		Settings: &EndpointSettings{
 			Method:           strings.ToLower(method),
 			Path:             path,
 			Middleware:       make([]mux.MiddlewareFunc, 0, 2),
