@@ -3,7 +3,6 @@ package oas
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/mux"
 	"github.com/tjbrockmeyer/oasm"
 	"log"
 	"net/http"
@@ -20,7 +19,7 @@ type EndpointSettings struct {
 	Method           string
 	Run              func(r *http.Request) *Response
 	Version          int
-	Middleware       []mux.MiddlewareFunc
+	Middleware       []func(h http.Handler) http.Handler
 	ResponseHandlers []func(req *http.Request, res *Response)
 }
 
@@ -30,7 +29,7 @@ func NewEndpoint(method, path, summary, description string, tags ...string) *End
 		Settings: &EndpointSettings{
 			Method:           strings.ToLower(method),
 			Path:             path,
-			Middleware:       make([]mux.MiddlewareFunc, 0, 2),
+			Middleware:       make([]func(http.Handler) http.Handler, 0, 2),
 			ResponseHandlers: make([]func(req *http.Request, res *Response), 0, 2),
 		},
 		Doc: &oasm.OperationDoc{
@@ -116,7 +115,7 @@ func (e *Endpoint) Security(name string, scopes ...string) *Endpoint {
 // Attach middleware to this endpoint.
 // Middleware is run before the endpoint function is called.
 // This is a good place for authorization and logging.
-func (e *Endpoint) Middleware(mdw mux.MiddlewareFunc) *Endpoint {
+func (e *Endpoint) Middleware(mdw func(http.Handler) http.Handler) *Endpoint {
 	e.Settings.Middleware = append(e.Settings.Middleware, mdw)
 	return e
 }

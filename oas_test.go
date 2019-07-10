@@ -247,11 +247,45 @@ func TestEndpoint_Security(t *testing.T) {
 }
 
 func TestEndpoint_Middleware(t *testing.T) {
-
+	e := newEndpoint()
+	e.Middleware(func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// some middleware logic
+		})
+	})
+	if len(e.Settings.Middleware) != 1 {
+		t.Errorf("Endpoint middleware list should have exactly 1 item")
+	}
 }
 
 func TestEndpoint_ResponseHandler(t *testing.T) {
+	e := newEndpoint()
+	e.ResponseHandler(func(req *http.Request, res *Response) {
+		if res.Error != nil && strings.Contains(res.Error.Error(), "this is a test") {
+			res.Status = 204
+			res.Body = nil
+			res.Error = nil
+		}
+	})
 
+	e.Func(func(r *http.Request) *Response {
+		return &Response{}
+	})
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/abc", nil)
+	e.Run(w, r)
+	if w.Code != 200 {
+		t.Errorf("Expected status code to be returned unmodified")
+	}
+
+	e.Func(func(r *http.Request) *Response {
+		return &Response{Error: fmt.Errorf("this is a test error")}
+	})
+	w = httptest.NewRecorder()
+	e.Run(w, r)
+	if w.Code != 204 {
+		t.Errorf("Expected status code to have been handled by the response handler")
+	}
 }
 
 func TestEndpoint_Run(t *testing.T) {
