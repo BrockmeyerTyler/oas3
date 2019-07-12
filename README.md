@@ -1,7 +1,7 @@
 # oas - Open API Specification
 
 [![GoDoc](https://godoc.org/github.com/tjbrockmeyer/oas?status.svg)](https://godoc.org/github.com/tjbrockmeyer/oas)
-[![Build Status](https://travis-ci.org/tjbrockmeyer/oas.svg?branch=master)](https://travis-ci.org/tjbrockmeyer/oas)
+[![Build Status](https://travis-ci.com/tjbrockmeyer/oas.svg?branch=master)](https://travis-ci.com/tjbrockmeyer/oas)
 [![codecov](https://codecov.io/gh/tjbrockmeyer/oas/branch/master/graph/badge.svg)](https://codecov.io/gh/tjbrockmeyer/oas)
 
 Golang Open API Specification Version 3 simple API setup package  
