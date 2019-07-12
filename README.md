@@ -70,7 +70,7 @@ func main() {
 }
 ```
 
-#### `./public/spec/schemas.json`
+#### `./schemas.json`
 ```json
 {
   "definitions": {
