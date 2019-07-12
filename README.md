@@ -8,8 +8,6 @@ Golang Open API Specification Version 3 simple API setup package
 Create json endpoint specs inline with your code implementation.  
 This package specifically serves and accepts the `application/json` content type.
 
-**This project is still in development, and may receive breaking changes without notification**
-
 UI is created using [SwaggerUI.](https://github.com/swagger-api/swagger-ui)
 
 The example below will create an API at http://localhost:5000 that has 1 endpoint, `GET /search` under 2 different tags.
