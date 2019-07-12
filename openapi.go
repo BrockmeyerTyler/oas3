@@ -28,7 +28,7 @@ var specPath = fmt.Sprintf("%s/openapi.json", specDir)
 //
 // dir - A directory for hosting the spec, schemas, and SwaggerUI.
 func NewOpenAPI(title, description, version, dir string) *OpenAPI {
-	if err := os.MkdirAll(path.Join(dir, specDir), os.ModePerm); err != nil && !fileExists(err) {
+	if err := os.MkdirAll(path.Join(dir, specDir), os.ModePerm); err != nil && !os.IsExist(err) {
 		log.Printf("failed to create spec directory: %v\n", err)
 	}
 	return &OpenAPI{

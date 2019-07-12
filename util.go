@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 )
 
 // A reference object
@@ -24,8 +23,4 @@ func CompRef(to string) json.RawMessage {
 
 func errorToJSON(err error) json.RawMessage {
 	return []byte(fmt.Sprintf(`{"message":"Internal Server Error","details":%s}`, strconv.Quote(err.Error())))
-}
-
-func fileExists(err error) bool {
-	return strings.Contains(err.Error(), "file exists")
 }
