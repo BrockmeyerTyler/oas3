@@ -1,4 +1,8 @@
 # oas - Open API Specification
+
+[![GoDoc](https://godoc.org/github.com/tjbrockmeyer/oas?status.svg)](https://godoc.org/github.com/tjbrockmeyer/oas)
+[![Build Status](https://travis-ci.org/tjbrockmeyer/oas.svg?branch=master)](https://travis-ci.org/tjbrockmeyer/oas)
+
 Golang Open API Specification Version 3 simple API setup package  
 Create json endpoint specs inline with your code implementation.  
 This package specifically serves and accepts the `application/json` content type.
