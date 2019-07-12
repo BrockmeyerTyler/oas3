@@ -91,14 +91,14 @@ func (o *OpenAPI) SecurityRequirement(name string, scopes ...string) *OpenAPI {
 }
 
 // Create a new security scheme of API key
-func (o *OpenAPI) NewAPIKey(name, description, headerName string) *OpenAPI {
+func (o *OpenAPI) NewAPIKey(loc oasm.SecurityInRequest, name, description, paramName string) *OpenAPI {
 	if o.Doc.Components.SecuritySchemes == nil {
 		o.Doc.Components.SecuritySchemes = make(map[string]*oasm.SecuritySchemeDoc)
 	}
 	o.Doc.Components.SecuritySchemes[name] = &oasm.SecuritySchemeDoc{
 		Type: "apiKey",
-		In:   "header",
-		Name: headerName,
+		In:   loc,
+		Name: paramName,
 	}
 	return o
 }
@@ -150,7 +150,8 @@ func (o *OpenAPI) AddSchemaFile(schemaFilepath, prefix string) error {
 		o.Doc.Components.Schemas = make(map[string]interface{})
 	}
 	for name := range defsMap {
-		o.Doc.Components.Schemas[name] = Ref(fmt.Sprintf("%s#/definitions/%s%s", schemaFilename, prefix, name))
+		o.Doc.Components.Schemas[fmt.Sprintf("%s%s", prefix, name)] =
+			Ref(fmt.Sprintf("%s#/definitions/%s", schemaFilename, name))
 	}
 	schemaCopy := fmt.Sprintf("%s/%s/%s", o.dir, specDir, schemaFilename)
 	_ = os.Remove(schemaCopy)
@@ -167,8 +168,7 @@ func (o *OpenAPI) CreateSwaggerUI() (fileServer http.Handler, err error) {
 	if !ok {
 		return nil, err
 	}
-	err = copy2.Copy(path.Join(path.Dir(file), "swagger-dist"), o.dir)
-	if err != nil {
+	if err = copy2.Copy(path.Join(path.Dir(file), "swagger-dist"), o.dir); err != nil {
 		return nil, fmt.Errorf("failed to copy swagger ui distribution: %v", err)
 	}
 	indexHtml := fmt.Sprintf("%s/index.html", o.dir)
