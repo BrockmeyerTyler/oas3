@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/tjbrockmeyer/oasm"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"reflect"
 	"strings"
 )
 
@@ -17,10 +19,11 @@ type Endpoint struct {
 type EndpointSettings struct {
 	Path             string
 	Method           string
-	Run              func(r *http.Request) *Response
+	Run              func(d Data) *Response
 	Version          int
 	Middleware       []func(h http.Handler) http.Handler
 	ResponseHandlers []func(req *http.Request, res *Response)
+	BodyType         reflect.Type
 }
 
 // Create a new endpoint for your API, supplying the mandatory arguments as necessary.
@@ -67,7 +70,9 @@ func (e *Endpoint) Parameter(in oasm.InRequest, name, description string, requir
 }
 
 // Attach a request body doc.
-func (e *Endpoint) RequestBody(description string, required bool, schema interface{}) *Endpoint {
+// `schema` will be used in the documentation, and `object` will be used for reading the body automatically.
+func (e *Endpoint) RequestBody(description string, required bool, schema, object interface{}) *Endpoint {
+	e.Settings.BodyType = reflect.TypeOf(object)
 	e.Doc.RequestBody = &oasm.RequestBodyDoc{
 		Description: description,
 		Required:    required,
@@ -132,13 +137,34 @@ func (e *Endpoint) ResponseHandler(rh func(*http.Request, *Response)) *Endpoint 
 
 // Attach a function to run when calling this endpoint
 // If an error is caught, run the following: `return oas3.Response{Error: err}`
-func (e *Endpoint) Func(f func(r *http.Request) *Response) *Endpoint {
+func (e *Endpoint) Func(f func(d Data) *Response) *Endpoint {
 	e.Settings.Run = f
 	return e
 }
 
 func (e *Endpoint) Run(w http.ResponseWriter, r *http.Request) {
-	res := e.Settings.Run(r)
+	res := new(Response)
+	var body interface{}
+
+	if e.Settings.BodyType != nil {
+		responseBody, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			res.Error = fmt.Errorf("failed to read request body: %v", err)
+		}
+		body = reflect.New(e.Settings.BodyType).Interface()
+		err = json.Unmarshal(responseBody, body)
+		if err != nil {
+			res.Error = err
+		}
+	}
+
+	if res.Error == nil {
+		res = e.Settings.Run(Data{
+			R:    r,
+			W:    w,
+			Body: body,
+		})
+	}
 
 	if res.Error != nil {
 		res.Body = errorToJSON(res.Error)

@@ -119,14 +119,14 @@ func TestEndpoint_Deprecate(t *testing.T) {
 func TestEndpoint_Func(t *testing.T) {
 	var funcRan bool
 	e := newEndpoint()
-	e.Func(func(r *http.Request) *Response {
+	e.Func(func(d Data) *Response {
 		funcRan = true
 		return &Response{}
 	})
 	if e.Settings.Run == nil {
 		t.Errorf("Run func should not be nil")
 	}
-	e.Settings.Run(nil)
+	e.Settings.Run(Data{})
 	if !funcRan {
 		t.Errorf("Run func did not get called properly")
 	}
@@ -209,10 +209,14 @@ func TestEndpoint_Response(t *testing.T) {
 }
 
 func TestEndpoint_RequestBody(t *testing.T) {
+	type Body struct {
+		Abc string `json:"abc"`
+	}
+
 	description := "description of the body"
-	schema := json.RawMessage(`{"type":"object"}`)
+	schema := json.RawMessage(`{"type":"object","properties":{"abc":{"type":"string"}}}`)
 	e := newEndpoint()
-	e.RequestBody(description, true, schema)
+	e.RequestBody(description, true, schema, Body{})
 	if e.Doc.RequestBody == nil {
 		t.Errorf("RequestBody should not be nil")
 	}
@@ -228,6 +232,18 @@ func TestEndpoint_RequestBody(t *testing.T) {
 	} else if string(content.Schema.(json.RawMessage)) != string(schema) {
 		t.Errorf("Expected request body schema (%s) to be equal to %s", content.Schema, schema)
 	}
+
+	val := "this is an ABC"
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/abc", strings.NewReader(fmt.Sprintf(`{"abc":"%s"}`, val)))
+	e.Func(func(d Data) *Response {
+		abc := d.Body.(*Body).Abc
+		if abc != val {
+			t.Errorf("Expected body to have been unmarshaled. Expected Abc=%s, Got Abc=%s", val, abc)
+		}
+		return &Response{}
+	})
+	e.Run(w, r)
 }
 
 func TestEndpoint_Security(t *testing.T) {
@@ -275,7 +291,7 @@ func TestEndpoint_ResponseHandler(t *testing.T) {
 		}
 	})
 
-	e.Func(func(r *http.Request) *Response {
+	e.Func(func(d Data) *Response {
 		return &Response{}
 	})
 	w := httptest.NewRecorder()
@@ -285,7 +301,7 @@ func TestEndpoint_ResponseHandler(t *testing.T) {
 		t.Errorf("Expected status code to be returned unmodified")
 	}
 
-	e.Func(func(r *http.Request) *Response {
+	e.Func(func(d Data) *Response {
 		return &Response{Error: fmt.Errorf("this is a test error")}
 	})
 	w = httptest.NewRecorder()
@@ -301,7 +317,7 @@ func TestEndpoint_Run(t *testing.T) {
 	e := newEndpoint()
 
 	w := httptest.NewRecorder()
-	e.Func(func(r *http.Request) *Response {
+	e.Func(func(d Data) *Response {
 		funcRan = true
 		return &Response{}
 	})
@@ -315,7 +331,7 @@ func TestEndpoint_Run(t *testing.T) {
 
 	body := `{"message":"Bad Request"}`
 	w = httptest.NewRecorder()
-	e.Func(func(r *http.Request) *Response {
+	e.Func(func(d Data) *Response {
 		return &Response{Status: 400, Body: json.RawMessage(body)}
 	})
 	e.Run(w, r)
@@ -328,7 +344,7 @@ func TestEndpoint_Run(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	e.Func(func(r *http.Request) *Response {
+	e.Func(func(d Data) *Response {
 		return &Response{Error: fmt.Errorf(`this is a test "error"`)}
 	})
 	e.Run(w, r)
@@ -342,7 +358,7 @@ func TestEndpoint_Run(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	e.Func(func(r *http.Request) *Response {
+	e.Func(func(d Data) *Response {
 		return &Response{Body: json.RawMessage(`{"message":"bad json"`)}
 	})
 	e.Run(w, r)
