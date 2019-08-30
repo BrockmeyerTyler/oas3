@@ -163,7 +163,7 @@ func (e *Endpoint) Run(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				err := recover()
 				if err != nil {
-					res.Error = fmt.Errorf("endpoint panic (%s %s) at runtime: %s", e.Settings.Method, e.Settings.Path, err)
+					res.Error = fmt.Errorf("panic: %v", err)
 				}
 			}()
 			res = e.Settings.Run(Data{
