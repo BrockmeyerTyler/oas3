@@ -365,6 +365,15 @@ func TestEndpoint_Run(t *testing.T) {
 	if w.Code != 500 {
 		t.Errorf("Expected response code when response is unable to be marshalled to have status of 500")
 	}
+
+	w = httptest.NewRecorder()
+	e.Func(func(d Data) *Response {
+		panic("test error")
+	})
+	e.Run(w, r)
+	if w.Code != 500 {
+		t.Errorf("Expected response code when panic is encountered to have status of 500")
+	}
 }
 
 // openapi.go
