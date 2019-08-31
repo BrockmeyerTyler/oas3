@@ -54,12 +54,13 @@ func TestErrorToJSON(t *testing.T) {
 // endpoint.go
 
 func TestNewEndpoint(t *testing.T) {
+	operationId := "getAbc"
 	method := "GET"
 	epPath := "/abc"
 	summary := "this is a summary"
 	description := "this is a description"
 
-	e := NewEndpoint(method, epPath, summary, description, "TAG1", "TAG2")
+	e := NewEndpoint(operationId, method, epPath, summary, description, "TAG1", "TAG2")
 	if e.Settings.Middleware == nil {
 		t.Errorf("Middleware should not be nil")
 	}
@@ -76,9 +77,8 @@ func TestNewEndpoint(t *testing.T) {
 	if e.Settings.Method != lowerMethod {
 		t.Errorf("Expected method (%s) to be equal to %s", e.Settings.Method, lowerMethod)
 	}
-	opId := fmt.Sprintf("%s%s", method, strings.ReplaceAll(epPath, "/", "_"))
-	if e.Doc.OperationId != opId {
-		t.Errorf("Expected OperationID (%s) to be equal to %s", e.Doc.OperationId, opId)
+	if e.Doc.OperationId != operationId {
+		t.Errorf("Expected OperationID (%s) to be equal to %s", e.Doc.OperationId, operationId)
 	}
 	if e.Doc.Parameters == nil {
 		t.Errorf("Doc Parameters should not be nil")

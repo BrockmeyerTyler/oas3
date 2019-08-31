@@ -27,7 +27,7 @@ type EndpointSettings struct {
 }
 
 // Create a new endpoint for your API, supplying the mandatory arguments as necessary.
-func NewEndpoint(method, path, summary, description string, tags ...string) *Endpoint {
+func NewEndpoint(operationId, method, path, summary, description string, tags ...string) *Endpoint {
 	return &Endpoint{
 		Settings: &EndpointSettings{
 			Method:           strings.ToLower(method),
@@ -39,7 +39,7 @@ func NewEndpoint(method, path, summary, description string, tags ...string) *End
 			Tags:        tags,
 			Summary:     summary,
 			Description: description,
-			OperationId: fmt.Sprintf("%s%s", method, strings.ReplaceAll(path, "/", "_")),
+			OperationId: operationId,
 			Parameters:  make([]*oasm.ParameterDoc, 0, 2),
 			Responses: &oasm.ResponsesDoc{
 				Codes: make(map[int]*oasm.ResponseDoc),
