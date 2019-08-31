@@ -35,6 +35,14 @@ func TestSchemaRef(t *testing.T) {
 	}
 }
 
+func TestArrayOfSchemaRef(t *testing.T) {
+	arrRef := ArrayOfSchemaRef("abc")
+	expected := `{"type":"array","items":{"$ref":"#/components/schemas/abc"}}`
+	if string(arrRef) != expected {
+		t.Errorf("Expected %s, Got: %s", expected, arrRef)
+	}
+}
+
 func TestCompRef(t *testing.T) {
 	ref := CompRef("abc")
 	expected := `{"$ref":"#/components/abc"}`

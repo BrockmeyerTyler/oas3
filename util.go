@@ -16,6 +16,10 @@ func SchemaRef(to string) json.RawMessage {
 	return Ref(fmt.Sprintf("#/components/schemas/%s", to))
 }
 
+func ArrayOfSchemaRef(to string) json.RawMessage {
+	return []byte(fmt.Sprintf(`{"type":"array","items":%s}`, SchemaRef(to)))
+}
+
 // A reference to any component in this document
 func CompRef(to string) json.RawMessage {
 	return Ref(fmt.Sprintf("#/components/%s", to))
