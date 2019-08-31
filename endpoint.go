@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"reflect"
+	"runtime/debug"
 	"strings"
 )
 
@@ -163,7 +164,9 @@ func (e *Endpoint) Run(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				err := recover()
 				if err != nil {
-					res.Error = fmt.Errorf("panic: %v", err)
+					res.Error = fmt.Errorf("a fatal error occurred")
+					log.Printf("endpoint panic (%s %s): %s\n", e.Settings.Method, e.Settings.Path, err)
+					debug.PrintStack()
 				}
 			}()
 			res = e.Settings.Run(Data{
@@ -183,9 +186,6 @@ func (e *Endpoint) Run(w http.ResponseWriter, r *http.Request) {
 
 	for _, rh := range e.Settings.ResponseHandlers {
 		rh(r, res)
-	}
-	if res.Error != nil {
-		log.Printf("endpoint error (%s %s) at runtime: %s", e.Settings.Method, e.Settings.Path, res.Error)
 	}
 	if res.Body == nil {
 		w.WriteHeader(res.Status)
