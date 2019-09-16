@@ -13,6 +13,7 @@ import (
 )
 
 type Endpoint struct {
+	spec     *OpenAPI
 	Settings *EndpointSettings
 	Doc      *oasm.OperationDoc
 }
@@ -148,14 +149,18 @@ func (e *Endpoint) Run(w http.ResponseWriter, r *http.Request) {
 	var body interface{}
 
 	if e.Settings.BodyType != nil {
-		responseBody, err := ioutil.ReadAll(r.Body)
+		requestBody, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			res.Error = fmt.Errorf("failed to read request body: %v", err)
 		}
+		err = r.Body.Close()
+		if err != nil && res.Error == nil {
+			res.Error = fmt.Errorf("failed to close request body: %v", err)
+		}
 		body = reflect.New(e.Settings.BodyType).Interface()
-		err = json.Unmarshal(responseBody, body)
-		if err != nil {
-			res.Error = err
+		err = json.Unmarshal(requestBody, body)
+		if err != nil && res.Error == nil {
+			res.Error = fmt.Errorf("failed to unmarshal request body: %v", err)
 		}
 	}
 

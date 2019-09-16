@@ -59,6 +59,7 @@ func (o *OpenAPI) Endpoints(routeCreator func(method, path string, handler http.
 		}
 		pathItem.Methods[oasm.HTTPVerb(e.Settings.Method)] = e.Doc
 		routeCreator(e.Settings.Method, e.Settings.Path, e.Run)
+		e.spec = o
 	}
 	return o
 }
