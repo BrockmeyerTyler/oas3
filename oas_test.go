@@ -127,14 +127,14 @@ func TestEndpoint_Deprecate(t *testing.T) {
 func TestEndpoint_Func(t *testing.T) {
 	var funcRan bool
 	e := newEndpoint()
-	e.Func(func(d Data) *Response {
+	e.Func(func(d Data) (Response, error) {
 		funcRan = true
-		return &Response{}
+		return Response{}, nil
 	})
 	if e.Settings.Run == nil {
 		t.Errorf("Run func should not be nil")
 	}
-	e.Settings.Run(Data{})
+	_, _ = e.Settings.Run(Data{})
 	if !funcRan {
 		t.Errorf("Run func did not get called properly")
 	}
@@ -244,12 +244,12 @@ func TestEndpoint_RequestBody(t *testing.T) {
 	val := "this is an ABC"
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/abc", strings.NewReader(fmt.Sprintf(`{"abc":"%s"}`, val)))
-	e.Func(func(d Data) *Response {
+	e.Func(func(d Data) (Response, error) {
 		abc := d.Body.(*Body).Abc
 		if abc != val {
 			t.Errorf("Expected body to have been unmarshaled. Expected Abc=%s, Got Abc=%s", val, abc)
 		}
-		return &Response{}
+		return Response{}, nil
 	})
 	e.Run(w, r)
 }
@@ -291,16 +291,15 @@ func TestEndpoint_Middleware(t *testing.T) {
 
 func TestEndpoint_ResponseHandler(t *testing.T) {
 	e := newEndpoint()
-	e.ResponseHandler(func(req *http.Request, res *Response) {
-		if res.Error != nil && strings.Contains(res.Error.Error(), "this is a test") {
+	e.ResponseHandler(func(req *http.Request, res *Response, err error) {
+		if err != nil && strings.Contains(err.Error(), "this is a test") {
 			res.Status = 204
 			res.Body = nil
-			res.Error = nil
 		}
 	})
 
-	e.Func(func(d Data) *Response {
-		return &Response{}
+	e.Func(func(d Data) (Response, error) {
+		return Response{}, nil
 	})
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/abc", nil)
@@ -309,8 +308,8 @@ func TestEndpoint_ResponseHandler(t *testing.T) {
 		t.Errorf("Expected status code to be returned unmodified")
 	}
 
-	e.Func(func(d Data) *Response {
-		return &Response{Error: fmt.Errorf("this is a test error")}
+	e.Func(func(d Data) (Response, error) {
+		return Response{}, fmt.Errorf("this is a test error")
 	})
 	w = httptest.NewRecorder()
 	e.Run(w, r)
@@ -325,9 +324,9 @@ func TestEndpoint_Run(t *testing.T) {
 	e := newEndpoint()
 
 	w := httptest.NewRecorder()
-	e.Func(func(d Data) *Response {
+	e.Func(func(d Data) (Response, error) {
 		funcRan = true
-		return &Response{}
+		return Response{}, nil
 	})
 	e.Run(w, r)
 	if !funcRan {
@@ -339,8 +338,8 @@ func TestEndpoint_Run(t *testing.T) {
 
 	body := `{"message":"Bad Request"}`
 	w = httptest.NewRecorder()
-	e.Func(func(d Data) *Response {
-		return &Response{Status: 400, Body: json.RawMessage(body)}
+	e.Func(func(d Data) (Response, error) {
+		return Response{Status: 400, Body: json.RawMessage(body)}, nil
 	})
 	e.Run(w, r)
 	if w.Code != 400 {
@@ -352,8 +351,8 @@ func TestEndpoint_Run(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	e.Func(func(d Data) *Response {
-		return &Response{Error: fmt.Errorf(`this is a test "error"`)}
+	e.Func(func(d Data) (Response, error) {
+		return Response{}, fmt.Errorf(`this is a test "error"`)
 	})
 	e.Run(w, r)
 	if w.Code != 500 {
@@ -366,8 +365,8 @@ func TestEndpoint_Run(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	e.Func(func(d Data) *Response {
-		return &Response{Body: json.RawMessage(`{"message":"bad json"`)}
+	e.Func(func(d Data) (Response, error) {
+		return Response{Body: json.RawMessage(`{"message":"bad json"`)}, nil
 	})
 	e.Run(w, r)
 	if w.Code != 500 {
@@ -375,12 +374,22 @@ func TestEndpoint_Run(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	e.Func(func(d Data) *Response {
+	e.Func(func(d Data) (Response, error) {
 		panic("test error")
 	})
 	e.Run(w, r)
 	if w.Code != 500 {
 		t.Errorf("Expected response code when panic is encountered to have status of 500")
+	}
+
+	w = httptest.NewRecorder()
+	e.Func(func(d Data) (Response, error) {
+		d.ResWriter.WriteHeader(204)
+		return Response{Ignore: true}, nil
+	})
+	e.Run(w, r)
+	if w.Code != 204 {
+		t.Errorf("Expected response to be ignored in favor of manual response writing. Status should be 204")
 	}
 }
 

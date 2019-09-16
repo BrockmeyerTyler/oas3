@@ -21,10 +21,10 @@ type Endpoint struct {
 type EndpointSettings struct {
 	Path             string
 	Method           string
-	Run              func(d Data) *Response
+	Run              func(d Data) (Response, error)
 	Version          int
 	Middleware       []func(h http.Handler) http.Handler
-	ResponseHandlers []func(req *http.Request, res *Response)
+	ResponseHandlers []func(req *http.Request, res *Response, err error)
 	BodyType         reflect.Type
 }
 
@@ -35,7 +35,7 @@ func NewEndpoint(operationId, method, path, summary, description string, tags ..
 			Method:           strings.ToLower(method),
 			Path:             path,
 			Middleware:       make([]func(http.Handler) http.Handler, 0, 2),
-			ResponseHandlers: make([]func(req *http.Request, res *Response), 0, 2),
+			ResponseHandlers: make([]func(*http.Request, *Response, error), 0, 2),
 		},
 		Doc: &oasm.OperationDoc{
 			Tags:        tags,
@@ -132,65 +132,75 @@ func (e *Endpoint) Middleware(mdw func(http.Handler) http.Handler) *Endpoint {
 // This is a good place for logging and metrics.
 // They have the ability to view and modify the response before sending it.
 // If there was an error, setting `res.Error` to `nil` will keep from printing it out.
-func (e *Endpoint) ResponseHandler(rh func(*http.Request, *Response)) *Endpoint {
+func (e *Endpoint) ResponseHandler(rh func(*http.Request, *Response, error)) *Endpoint {
 	e.Settings.ResponseHandlers = append(e.Settings.ResponseHandlers, rh)
 	return e
 }
 
 // Attach a function to run when calling this endpoint
 // If an error is caught, run the following: `return oas3.Response{Error: err}`
-func (e *Endpoint) Func(f func(d Data) *Response) *Endpoint {
+func (e *Endpoint) Func(f func(d Data) (Response, error)) *Endpoint {
 	e.Settings.Run = f
 	return e
 }
 
-func (e *Endpoint) Run(w http.ResponseWriter, r *http.Request) {
-	res := new(Response)
+func (e *Endpoint) getRequestBody(r *http.Request) (interface{}, error) {
+	if e.Settings.BodyType == nil {
+		return nil, nil
+	}
+	requestBody, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read request body: %v", err)
+	}
+	err = r.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("failed to close request body: %v", err)
+	}
+	body := reflect.New(e.Settings.BodyType).Interface()
+	err = json.Unmarshal(requestBody, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal request body: %v", err)
+	}
+	return body, nil
+}
+
+func (e *Endpoint) runFunc(w http.ResponseWriter, r *http.Request) (res Response, err error) {
 	var body interface{}
-
-	if e.Settings.BodyType != nil {
-		requestBody, err := ioutil.ReadAll(r.Body)
-		if err != nil {
-			res.Error = fmt.Errorf("failed to read request body: %v", err)
-		}
-		err = r.Body.Close()
-		if err != nil && res.Error == nil {
-			res.Error = fmt.Errorf("failed to close request body: %v", err)
-		}
-		body = reflect.New(e.Settings.BodyType).Interface()
-		err = json.Unmarshal(requestBody, body)
-		if err != nil && res.Error == nil {
-			res.Error = fmt.Errorf("failed to unmarshal request body: %v", err)
-		}
+	body, err = e.getRequestBody(r)
+	if err != nil {
+		return
 	}
+	defer func() {
+		panicErr := recover()
+		if panicErr != nil {
+			err = fmt.Errorf("a fatal error occurred: %v", panicErr)
+			log.Printf("endpoint panic (%s %s): %s\n", e.Settings.Method, e.Settings.Path, panicErr)
+			debug.PrintStack()
+		}
+	}()
+	return e.Settings.Run(Data{
+		Req:       r,
+		ResWriter: w,
+		Body:      body,
+	})
+}
 
-	if res.Error == nil {
-		func() {
-			defer func() {
-				err := recover()
-				if err != nil {
-					res.Error = fmt.Errorf("a fatal error occurred")
-					log.Printf("endpoint panic (%s %s): %s\n", e.Settings.Method, e.Settings.Path, err)
-					debug.PrintStack()
-				}
-			}()
-			res = e.Settings.Run(Data{
-				R:    r,
-				W:    w,
-				Body: body,
-			})
-		}()
-	}
+func (e *Endpoint) Run(w http.ResponseWriter, r *http.Request) {
+	res, err := e.runFunc(w, r)
 
-	if res.Error != nil {
-		res.Body = errorToJSON(res.Error)
-		res.Status = 500
+	if err != nil {
+		res = Response{
+			Body:   errorToJSON(err),
+			Status: 500,
+		}
+	} else if res.Ignore {
+		return
 	} else if res.Status == 0 {
 		res.Status = 200
 	}
 
 	for _, rh := range e.Settings.ResponseHandlers {
-		rh(r, res)
+		rh(r, &res, err)
 	}
 	if res.Body == nil {
 		w.WriteHeader(res.Status)
@@ -198,7 +208,6 @@ func (e *Endpoint) Run(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var b []byte
-	var err error
 	if b, err = json.Marshal(res.Body); err != nil {
 		log.Printf("endpoint error (%s %s) at marshal body: %s\n\tobject: %v",
 			e.Settings.Method, e.Settings.Path, err, res.Body)

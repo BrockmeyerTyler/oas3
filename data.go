@@ -3,7 +3,7 @@ package oas
 import "net/http"
 
 type Data struct {
-	R    *http.Request
-	W    http.ResponseWriter
-	Body interface{}
+	Req       *http.Request
+	ResWriter http.ResponseWriter
+	Body      interface{}
 }
