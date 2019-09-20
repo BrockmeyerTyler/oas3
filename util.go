@@ -3,8 +3,49 @@ package oas
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 )
+
+type Data struct {
+	Req       *http.Request
+	ResWriter http.ResponseWriter
+	Query     url.Values
+	Params    map[string]string
+	Body      interface{}
+}
+
+type Response struct {
+	// If set, the Response will be ignored.
+	// Set ONLY when handling the response writer manually.
+	Ignore  bool
+	Status  int
+	Body    interface{}
+	Headers map[string]string
+}
+
+type ValidationError struct {
+	errors []string
+}
+
+func (v *ValidationError) Add(str string) {
+	if v.errors == nil {
+		v.errors = make([]string, 1, 5)
+		v.errors[0] = str
+	} else {
+		v.errors = append(v.errors, str)
+	}
+}
+
+func (v ValidationError) HasErrors() bool {
+	return v.errors != nil
+}
+
+func (v ValidationError) Error() string {
+	return "a validation error has occurred:\n  " + strings.Join(v.errors, "\n  ")
+}
 
 // A reference object
 func Ref(to string) json.RawMessage {
