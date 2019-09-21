@@ -17,7 +17,9 @@ import (
 
 type OpenAPI struct {
 	Doc *oasm.OpenAPIDoc
-	dir string
+	// Indent level of JSON responses. A level of 0 will not pretty-print.
+	JSONIndent int
+	dir        string
 }
 
 var specDir = "spec"

@@ -279,7 +279,13 @@ func (e *Endpoint) Run(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var b []byte
-	if b, err = json.Marshal(res.Body); err != nil {
+
+	if e.spec != nil && e.spec.JSONIndent > 0 {
+		b, err = json.MarshalIndent(res.Body, "", strings.Repeat(" ", e.spec.JSONIndent))
+	} else {
+		b, err = json.Marshal(res.Body)
+	}
+	if err != nil {
 		log.Printf("endpoint error (%s %s) at marshal body: %s\n\tobject: %v",
 			e.Settings.Method, e.Settings.Path, err, res.Body)
 		res.Status = 500
