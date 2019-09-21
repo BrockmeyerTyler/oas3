@@ -23,8 +23,8 @@ type Data struct {
 	Headers map[string]string
 	// The request body, marshaled into the type of object which was set up on this endpoint during initialization.
 	Body interface{}
-	// The raw request body.
-	RawBody []byte
+	// The endpoint which was called.
+	Endpoint *Endpoint
 }
 
 type Response struct {

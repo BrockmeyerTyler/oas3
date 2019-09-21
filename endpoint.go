@@ -189,6 +189,7 @@ func (e *Endpoint) runFunc(w http.ResponseWriter, r *http.Request) (data Data, r
 	data = Data{
 		Req:       r,
 		ResWriter: w,
+		Endpoint:  e,
 	}
 
 	if e.bodyType != nil {
