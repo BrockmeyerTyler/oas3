@@ -391,6 +391,29 @@ func TestEndpoint_Run(t *testing.T) {
 	if w.Code != 204 {
 		t.Errorf("Expected response to be ignored in favor of manual response writing. Status should be 204")
 	}
+
+	stringSchema := json.RawMessage(`{"type":"string"}`)
+	r = httptest.NewRequest("POST", "/abc/123?kind=abc%20Kind", nil)
+	r.Header.Set("x-info", "abcInfo")
+	w = httptest.NewRecorder()
+	e = NewEndpoint("createABC", "POST", "/abc/{id}", "Update an ABC", "<= What he said.", "ABC").
+		Parameter(oasm.InPath, "id", "The ABC's ID.", true, stringSchema).
+		Parameter(oasm.InQuery, "kind", "The ABC's kind", true, stringSchema).
+		Parameter(oasm.InHeader, "x-info", "The ABC's info", true, stringSchema).
+		Func(func(d Data) (Response, error) {
+			if len(d.Query) != 1 || d.Query["kind"] != "abc Kind" {
+				t.Errorf("Expected Data.Query to have len()=1 and id=abc Kind. Got %v", d.Query)
+			}
+			if len(d.Params) != 1 || d.Params["id"] != "123" {
+				t.Errorf("Expected Data.Params to have len()=1 and id=123. Got %v", d.Params)
+			}
+			if len(d.Headers) != 1 || d.Headers["x-info"] != "abcInfo" {
+				t.Errorf("Expected Data.Headers to have len()=1 and id=abcInfo. Got %v", d.Headers)
+			}
+			return Response{}, nil
+		})
+	e.Run(w, r)
+
 }
 
 // openapi.go

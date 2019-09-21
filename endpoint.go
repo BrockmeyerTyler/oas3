@@ -8,14 +8,22 @@ import (
 	"log"
 	"net/http"
 	"reflect"
+	"regexp"
 	"runtime/debug"
 	"strings"
 )
 
 type Endpoint struct {
-	spec     *OpenAPI
 	Settings *EndpointSettings
 	Doc      *oasm.OperationDoc
+
+	spec       *OpenAPI
+	parsedPath map[string]int
+
+	bodyType reflect.Type
+	query    []*oasm.ParameterDoc
+	params   map[int]*oasm.ParameterDoc
+	headers  []*oasm.ParameterDoc
 }
 
 type EndpointSettings struct {
@@ -25,12 +33,20 @@ type EndpointSettings struct {
 	Version          int
 	Middleware       []func(h http.Handler) http.Handler
 	ResponseHandlers []func(req *http.Request, res *Response, err error)
-	BodyType         reflect.Type
 }
 
 // Create a new endpoint for your API, supplying the mandatory arguments as necessary.
 func NewEndpoint(operationId, method, path, summary, description string, tags ...string) *Endpoint {
+	parsedPath := make(map[string]int)
+	pathParamRegex := regexp.MustCompile(`{[^/]+}`)
+	splitPath := strings.Split(path, "/")
+	for i, s := range splitPath {
+		if pathParamRegex.MatchString(s) {
+			parsedPath[s[1:len(s)-1]] = i
+		}
+	}
 	return &Endpoint{
+		parsedPath: parsedPath,
 		Settings: &EndpointSettings{
 			Method:           strings.ToLower(method),
 			Path:             path,
@@ -61,20 +77,45 @@ func (e *Endpoint) Version(version int) *Endpoint {
 
 // Attach a parameter doc.
 func (e *Endpoint) Parameter(in oasm.InRequest, name, description string, required bool, schema interface{}) *Endpoint {
-	e.Doc.Parameters = append(e.Doc.Parameters, &oasm.ParameterDoc{
+	param := &oasm.ParameterDoc{
 		Name:        name,
 		Description: description,
 		In:          in,
 		Required:    required,
 		Schema:      schema,
-	})
+	}
+	e.Doc.Parameters = append(e.Doc.Parameters, param)
+	switch in {
+	case oasm.InQuery:
+		if e.query == nil {
+			e.query = make([]*oasm.ParameterDoc, 1, 3)
+			e.query[0] = param
+		} else {
+			e.query = append(e.query, param)
+		}
+	case oasm.InPath:
+		loc, ok := e.parsedPath[name]
+		if ok {
+			if e.params == nil {
+				e.params = make(map[int]*oasm.ParameterDoc, 3)
+			}
+			e.params[loc] = param
+		}
+	case oasm.InHeader:
+		if e.headers == nil {
+			e.headers = make([]*oasm.ParameterDoc, 1, 3)
+			e.headers[0] = param
+		} else {
+			e.headers = append(e.headers, param)
+		}
+	}
 	return e
 }
 
 // Attach a request body doc.
 // `schema` will be used in the documentation, and `object` will be used for reading the body automatically.
 func (e *Endpoint) RequestBody(description string, required bool, schema, object interface{}) *Endpoint {
-	e.Settings.BodyType = reflect.TypeOf(object)
+	e.bodyType = reflect.TypeOf(object)
 	e.Doc.RequestBody = &oasm.RequestBodyDoc{
 		Description: description,
 		Required:    required,
@@ -144,32 +185,64 @@ func (e *Endpoint) Func(f func(d Data) (Response, error)) *Endpoint {
 	return e
 }
 
-func (e *Endpoint) getRequestBody(r *http.Request) (interface{}, error) {
-	if e.Settings.BodyType == nil {
-		return nil, nil
-	}
-	requestBody, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read request body: %v", err)
-	}
-	err = r.Body.Close()
-	if err != nil {
-		return nil, fmt.Errorf("failed to close request body: %v", err)
-	}
-	body := reflect.New(e.Settings.BodyType).Interface()
-	err = json.Unmarshal(requestBody, body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal request body: %v", err)
-	}
-	return body, nil
-}
-
 func (e *Endpoint) runFunc(w http.ResponseWriter, r *http.Request) (res Response, err error) {
-	var body interface{}
-	body, err = e.getRequestBody(r)
-	if err != nil {
-		return
+	data := Data{
+		Req:       r,
+		ResWriter: w,
 	}
+
+	if e.bodyType != nil {
+		var requestBody []byte
+		requestBody, err = ioutil.ReadAll(r.Body)
+		if err != nil {
+			return res, fmt.Errorf("failed to read request body: %v", err)
+		}
+		err = r.Body.Close()
+		if err != nil {
+			return res, fmt.Errorf("failed to close request body: %v", err)
+		}
+		data.Body = reflect.New(e.bodyType).Interface()
+		err = json.Unmarshal(requestBody, data.Body)
+		if err != nil {
+			return res, fmt.Errorf("failed to unmarshal request body: %v", err)
+		}
+	}
+
+	if e.query == nil {
+		data.Query = make(map[string]string, 0)
+	} else {
+		data.Query = make(map[string]string, len(e.query))
+		getQueryParam := r.URL.Query().Get
+		for _, param := range e.query {
+			name := param.Name
+			data.Query[name] = getQueryParam(name)
+		}
+	}
+
+	if e.params == nil {
+		data.Params = make(map[string]string, 0)
+	} else {
+		splitPath := strings.Split(r.URL.Path, "/")
+		data.Params = make(map[string]string, len(e.params))
+		for loc, param := range e.params {
+			if len(splitPath) <= loc {
+				continue
+			}
+			data.Params[param.Name] = splitPath[loc]
+		}
+	}
+
+	if e.headers == nil {
+		data.Headers = make(map[string]string, 0)
+	} else {
+		data.Headers = make(map[string]string, len(r.Header))
+		setHeader := r.Header.Get
+		for _, param := range e.headers {
+			name := param.Name
+			data.Headers[name] = setHeader(name)
+		}
+	}
+
 	defer func() {
 		panicErr := recover()
 		if panicErr != nil {
@@ -178,11 +251,7 @@ func (e *Endpoint) runFunc(w http.ResponseWriter, r *http.Request) (res Response
 			debug.PrintStack()
 		}
 	}()
-	return e.Settings.Run(Data{
-		Req:       r,
-		ResWriter: w,
-		Body:      body,
-	})
+	return e.Settings.Run(data)
 }
 
 func (e *Endpoint) Run(w http.ResponseWriter, r *http.Request) {

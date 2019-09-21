@@ -4,25 +4,36 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 )
 
 type Data struct {
-	Req       *http.Request
+	// The HTTP Request that called this endpoint.
+	Req *http.Request
+	// The HTTP Response Writer.
+	// When using, be sure to:
+	//   return Response{Ignore:true}.
 	ResWriter http.ResponseWriter
-	Query     url.Values
-	Params    map[string]string
-	Body      interface{}
+	// The query parameters passed in the url which are defined in the documentation for this endpoint.
+	Query map[string]string
+	// The path parameters passed in the url which are defined in the documentation for this endpoint.
+	Params map[string]string
+	// The headers passed in the request which are defined in the documentation for this endpoint.
+	Headers map[string]string
+	// The request body, marshaled into the type of object which was set up on this endpoint during initialization.
+	Body interface{}
 }
 
 type Response struct {
 	// If set, the Response will be ignored.
 	// Set ONLY when handling the response writer manually.
-	Ignore  bool
-	Status  int
-	Body    interface{}
+	Ignore bool
+	// The status code of the response.
+	Status int
+	// The body to send back in the response. If nil, no body will be sent.
+	Body interface{}
+	// The headers to send back in the response.
 	Headers map[string]string
 }
 
