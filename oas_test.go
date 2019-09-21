@@ -291,7 +291,7 @@ func TestEndpoint_Middleware(t *testing.T) {
 
 func TestEndpoint_ResponseHandler(t *testing.T) {
 	e := newEndpoint()
-	e.ResponseHandler(func(req *http.Request, res *Response, err error) {
+	e.ResponseHandler(func(d Data, res *Response, err error) {
 		if err != nil && strings.Contains(err.Error(), "this is a test") {
 			res.Status = 204
 			res.Body = nil

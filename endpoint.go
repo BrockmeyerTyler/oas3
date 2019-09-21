@@ -32,7 +32,7 @@ type EndpointSettings struct {
 	Run              func(d Data) (Response, error)
 	Version          int
 	Middleware       []func(h http.Handler) http.Handler
-	ResponseHandlers []func(req *http.Request, res *Response, err error)
+	ResponseHandlers []func(d Data, res *Response, err error)
 }
 
 // Create a new endpoint for your API, supplying the mandatory arguments as necessary.
@@ -51,7 +51,7 @@ func NewEndpoint(operationId, method, path, summary, description string, tags ..
 			Method:           strings.ToLower(method),
 			Path:             path,
 			Middleware:       make([]func(http.Handler) http.Handler, 0, 2),
-			ResponseHandlers: make([]func(*http.Request, *Response, error), 0, 2),
+			ResponseHandlers: make([]func(Data, *Response, error), 0, 2),
 		},
 		Doc: &oasm.OperationDoc{
 			Tags:        tags,
@@ -173,7 +173,7 @@ func (e *Endpoint) Middleware(mdw func(http.Handler) http.Handler) *Endpoint {
 // This is a good place for logging and metrics.
 // They have the ability to view and modify the response before sending it.
 // If there was an error, setting `res.Error` to `nil` will keep from printing it out.
-func (e *Endpoint) ResponseHandler(rh func(*http.Request, *Response, error)) *Endpoint {
+func (e *Endpoint) ResponseHandler(rh func(Data, *Response, error)) *Endpoint {
 	e.Settings.ResponseHandlers = append(e.Settings.ResponseHandlers, rh)
 	return e
 }
@@ -185,8 +185,8 @@ func (e *Endpoint) Func(f func(d Data) (Response, error)) *Endpoint {
 	return e
 }
 
-func (e *Endpoint) runFunc(w http.ResponseWriter, r *http.Request) (res Response, err error) {
-	data := Data{
+func (e *Endpoint) runFunc(w http.ResponseWriter, r *http.Request) (data Data, res Response, err error) {
+	data = Data{
 		Req:       r,
 		ResWriter: w,
 	}
@@ -195,16 +195,16 @@ func (e *Endpoint) runFunc(w http.ResponseWriter, r *http.Request) (res Response
 		var requestBody []byte
 		requestBody, err = ioutil.ReadAll(r.Body)
 		if err != nil {
-			return res, fmt.Errorf("failed to read request body: %v", err)
+			return data, res, fmt.Errorf("failed to read request body: %v", err)
 		}
 		err = r.Body.Close()
 		if err != nil {
-			return res, fmt.Errorf("failed to close request body: %v", err)
+			return data, res, fmt.Errorf("failed to close request body: %v", err)
 		}
 		data.Body = reflect.New(e.bodyType).Interface()
 		err = json.Unmarshal(requestBody, data.Body)
 		if err != nil {
-			return res, fmt.Errorf("failed to unmarshal request body: %v", err)
+			return data, res, fmt.Errorf("failed to unmarshal request body: %v", err)
 		}
 	}
 
@@ -251,11 +251,13 @@ func (e *Endpoint) runFunc(w http.ResponseWriter, r *http.Request) (res Response
 			debug.PrintStack()
 		}
 	}()
-	return e.Settings.Run(data)
+
+	res, err = e.Settings.Run(data)
+	return
 }
 
 func (e *Endpoint) Run(w http.ResponseWriter, r *http.Request) {
-	res, err := e.runFunc(w, r)
+	data, res, err := e.runFunc(w, r)
 
 	if err != nil {
 		res = Response{
@@ -269,7 +271,7 @@ func (e *Endpoint) Run(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, rh := range e.Settings.ResponseHandlers {
-		rh(r, &res, err)
+		rh(data, &res, err)
 	}
 	if res.Body == nil {
 		w.WriteHeader(res.Status)
