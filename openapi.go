@@ -16,7 +16,7 @@ import (
 )
 
 type OpenAPI struct {
-	Doc *oasm.OpenAPIDoc
+	Doc oasm.OpenAPIDoc
 	// Indent level of JSON responses. A level of 0 will not pretty-print.
 	JSONIndent int
 	dir        string
@@ -29,93 +29,77 @@ var specPath = fmt.Sprintf("%s/openapi.json", specDir)
 // This will create the endpoints in the documentation and will create routes for them.
 //
 // dir - A directory for hosting the spec, schemas, and SwaggerUI.
-func NewOpenAPI(title, description, version, dir string) *OpenAPI {
+func NewOpenAPI(title, description, url, version, dir string, tags []oasm.Tag) *OpenAPI {
 	if err := os.MkdirAll(path.Join(dir, specDir), os.ModePerm); err != nil && !os.IsExist(err) {
 		log.Printf("failed to create spec directory: %v\n", err)
 	}
 	return &OpenAPI{
-		Doc: &oasm.OpenAPIDoc{
+		Doc: oasm.OpenAPIDoc{
 			OpenApi: "3.0.0",
-			Info: &oasm.InfoDoc{
+			Info: oasm.Info{
 				Title:       title,
 				Description: description,
 				Version:     version,
 			},
-			Servers:    make([]*oasm.ServerDoc, 0, 1),
-			Tags:       make([]*oasm.TagDoc, 0, 3),
-			Paths:      make(oasm.PathsDoc),
-			Components: &oasm.ComponentsDoc{},
+			Servers: []oasm.Server{{
+				Url:         url,
+				Description: title,
+				Variables:   nil,
+			}},
+			Tags:       tags,
+			Paths:      make(oasm.PathsMap),
+			Components: oasm.Components{},
 		},
 		dir: dir,
 	}
 }
 
 // Add an amount of endpoints to the API.
-func (o *OpenAPI) Endpoints(routeCreator func(method, path string, handler http.HandlerFunc), endpoints ...*Endpoint) *OpenAPI {
+func (o *OpenAPI) AddEndpoints(routeCreator func(method, path string, handler http.HandlerFunc), endpoints ...*Endpoint) *OpenAPI {
 	for _, e := range endpoints {
 		pathItem, ok := o.Doc.Paths[e.Settings.Path]
 		if !ok {
-			pathItem = &oasm.PathItemDoc{
-				Methods: make(map[oasm.HTTPVerb]*oasm.OperationDoc)}
+			pathItem = oasm.PathItem{
+				Methods: make(map[string]oasm.Operation)}
 			o.Doc.Paths[e.Settings.Path] = pathItem
 		}
-		pathItem.Methods[oasm.HTTPVerb(e.Settings.Method)] = e.Doc
+		pathItem.Methods[e.Settings.Method] = e.Doc
 		routeCreator(e.Settings.Method, e.Settings.Path, e.Run)
 		e.spec = o
 	}
 	return o
 }
 
-// Add a server to the API
-func (o *OpenAPI) Server(url, description string) *OpenAPI {
-	o.Doc.Servers = append(o.Doc.Servers, &oasm.ServerDoc{
-		Url:         url,
-		Description: description,
-	})
-	return o
-}
-
-// Add a tag to the API with a description
-func (o *OpenAPI) Tag(name, description string) *OpenAPI {
-	o.Doc.Tags = append(o.Doc.Tags, &oasm.TagDoc{
-		Name:        name,
-		Description: description,
-	})
-	return o
-}
-
 // Add global security requirements for the API
-func (o *OpenAPI) SecurityRequirement(name string, scopes ...string) *OpenAPI {
-	o.Doc.Security = append(o.Doc.Security, &oasm.SecurityRequirementDoc{
+func (o *OpenAPI) AddSecurityRequirement(name string, scopes ...string) {
+	o.Doc.Security = append(o.Doc.Security, oasm.SecurityRequirement{
 		Name:   name,
 		Scopes: scopes,
 	})
-	return o
 }
 
 // Create a new security scheme of API key
-func (o *OpenAPI) NewAPIKey(loc oasm.SecurityInRequest, name, description, paramName string) *OpenAPI {
+func (o *OpenAPI) AddAPIKey(loc, name, description, paramName string) {
 	if o.Doc.Components.SecuritySchemes == nil {
-		o.Doc.Components.SecuritySchemes = make(map[string]*oasm.SecuritySchemeDoc)
+		o.Doc.Components.SecuritySchemes = make(map[string]oasm.SecurityScheme)
 	}
-	o.Doc.Components.SecuritySchemes[name] = &oasm.SecuritySchemeDoc{
+	o.Doc.Components.SecuritySchemes[name] = oasm.SecurityScheme{
 		Type: "apiKey",
 		In:   loc,
 		Name: paramName,
 	}
-	return o
 }
 
 // Create a new security scheme of clientCredentials.
-func (o *OpenAPI) NewClientCredentialsOAuth(
+func (o *OpenAPI) AddClientCredentialsOAuth(
 	name, description, tokenUrl, refreshUrl string,
-	scopes map[string]string) *OpenAPI {
+	scopes map[string]string) {
 	if o.Doc.Components.SecuritySchemes == nil {
-		o.Doc.Components.SecuritySchemes = make(map[string]*oasm.SecuritySchemeDoc)
+		o.Doc.Components.SecuritySchemes = make(map[string]oasm.SecurityScheme)
 	}
-	o.Doc.Components.SecuritySchemes[name] = &oasm.SecuritySchemeDoc{
+	o.Doc.Components.SecuritySchemes[name] = oasm.SecurityScheme{
 		Type: "oauth2",
-		Flows: map[oasm.OAuthFlowType]*oasm.OAuthFlowDoc{
+		Flows: map[string]oasm.OAuthFlow{
 			"clientCredentials": {
 				TokenUrl:   tokenUrl,
 				RefreshUrl: refreshUrl,
@@ -123,7 +107,6 @@ func (o *OpenAPI) NewClientCredentialsOAuth(
 			},
 		},
 	}
-	return o
 }
 
 // Add a schema file to your documentation.

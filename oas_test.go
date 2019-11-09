@@ -225,7 +225,7 @@ func TestEndpoint_RequestBody(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"abc":{"type":"string"}}}`)
 	e := newEndpoint()
 	e.RequestBody(description, true, schema, Body{})
-	if e.Doc.RequestBody == nil {
+	if e.Doc.RequestBody.Content == nil {
 		t.Errorf("RequestBody should not be nil")
 	}
 	rb := e.Doc.RequestBody
@@ -419,8 +419,7 @@ func TestEndpoint_Run(t *testing.T) {
 // openapi.go
 
 func newApi() *OpenAPI {
-
-	return NewOpenAPI("title", "description", "1.0.0", "./test/public")
+	return NewOpenAPI("title", "description", "http://localhost", "1.0.0", "./test/public", []oasm.Tag{})
 }
 
 func cleanupApi(o *OpenAPI) {
@@ -432,20 +431,18 @@ func TestNewOpenAPI(t *testing.T) {
 	description := "description"
 	version := "1.0.0"
 	dir := "./test/public"
+	url := "http://localhost"
+	tags := []oasm.Tag{
+		{Name: "Tag1", Description: "This is the first tag"},
+	}
 	//noinspection ALL
 	defer os.RemoveAll("./test/public")
 
-	o := NewOpenAPI(title, description, version, dir)
+	o := NewOpenAPI(title, description, url, version, dir, tags)
 	if o.dir != dir {
 		t.Errorf("Expected API dir (%s) to be equal to %s", o.dir, dir)
 	}
 
-	if o.Doc == nil {
-		t.Errorf("Expected API doc to not be nil")
-	}
-	if o.Doc.Info == nil {
-		t.Errorf("Expected API doc info to not be nil")
-	}
 	info := o.Doc.Info
 	if info.Description != description || info.Version != version || info.Title != title {
 		t.Errorf("Expected API doc info (%+v) to have description '%s', version '%s' and title '%s'",
@@ -459,9 +456,6 @@ func TestNewOpenAPI(t *testing.T) {
 	}
 	if o.Doc.Paths == nil {
 		t.Errorf("Expected API doc paths to not be nil")
-	}
-	if o.Doc.Components == nil {
-		t.Errorf("Expected API doc components to not be nil")
 	}
 
 	_, err := os.Stat(dir)
@@ -484,7 +478,7 @@ func TestOpenAPI_Endpoints(t *testing.T) {
 	o := newApi()
 	defer cleanupApi(o)
 	e := newEndpoint()
-	o.Endpoints(func(method, path string, handler http.HandlerFunc) {
+	o.AddEndpoints(func(method, path string, handler http.HandlerFunc) {
 		if method != e.Settings.Method || path != e.Settings.Path {
 			t.Errorf("Expected path (%s) and method (%s) to be equal to the endpoint's path (%s) and method (%s)",
 				path, method, e.Settings.Path, e.Settings.Method)
@@ -492,42 +486,8 @@ func TestOpenAPI_Endpoints(t *testing.T) {
 	}, e)
 	if pathItem, ok := o.Doc.Paths[e.Settings.Path]; !ok {
 		t.Errorf("Expected a path item to be created for the endpoint path")
-	} else if operation, ok := pathItem.Methods[oasm.HTTPVerb(e.Settings.Method)]; !ok {
+	} else if _, ok := pathItem.Methods[e.Settings.Method]; !ok {
 		t.Errorf("Expected an operation item to be created for the endpoint method")
-	} else if operation != e.Doc {
-		t.Errorf("Expected the operation item to be qual to the endpoint doc")
-	}
-}
-
-func TestOpenAPI_Server(t *testing.T) {
-	url := "http://localhost:5000"
-	description := "d"
-	o := newApi()
-	defer cleanupApi(o)
-	o.Server(url, description)
-	if len(o.Doc.Servers) != 1 {
-		t.Errorf("Expected there to be exactly 1 server")
-	}
-	s := o.Doc.Servers[0]
-	if s.Url != url || s.Description != description {
-		t.Errorf("Expected server (%+v) to have a URL and description equal to %s and %s",
-			s, url, description)
-	}
-}
-
-func TestOpenAPI_Tag(t *testing.T) {
-	name := "tag1"
-	description := "tag1 description"
-	o := newApi()
-	defer cleanupApi(o)
-	o.Tag(name, description)
-	if len(o.Doc.Tags) != 1 {
-		t.Errorf("Expected there to be exactly 1 tag")
-	}
-	tag := o.Doc.Tags[0]
-	if tag.Name != name || tag.Description != description {
-		t.Errorf("Expected tag (%+v) name and description to be equal to %s and %s",
-			tag, name, description)
 	}
 }
 
@@ -535,7 +495,7 @@ func TestOpenAPI_SecurityRequirement(t *testing.T) {
 	name := "secure"
 	o := newApi()
 	defer cleanupApi(o)
-	o.SecurityRequirement(name, "SCOPE1", "SCOPE2")
+	o.AddSecurityRequirement(name, "SCOPE1", "SCOPE2")
 	if len(o.Doc.Security) != 1 {
 		t.Errorf("Expected there to be exactly 1 security requirement")
 	}
@@ -558,7 +518,7 @@ func TestOpenAPI_NewAPIKey(t *testing.T) {
 	paramName := "x-access-key"
 	o := newApi()
 	defer cleanupApi(o)
-	o.NewAPIKey(in, name, description, paramName)
+	o.AddAPIKey(in, name, description, paramName)
 
 	if o.Doc.Components.SecuritySchemes == nil {
 		t.Errorf("Expected security schemes to not be nil")
@@ -581,7 +541,7 @@ func TestOpenAPI_NewClientCredentialsOAuth(t *testing.T) {
 	}
 	o := newApi()
 	defer cleanupApi(o)
-	o.NewClientCredentialsOAuth(name, description, url, refreshUrl, scopes)
+	o.AddClientCredentialsOAuth(name, description, url, refreshUrl, scopes)
 
 	if o.Doc.Components.SecuritySchemes == nil {
 		t.Errorf("Expected security schemes to not be nil")

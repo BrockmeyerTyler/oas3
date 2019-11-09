@@ -15,15 +15,15 @@ import (
 
 type Endpoint struct {
 	Settings *EndpointSettings
-	Doc      *oasm.OperationDoc
+	Doc      oasm.Operation
 
 	spec       *OpenAPI
 	parsedPath map[string]int
 
 	bodyType reflect.Type
-	query    []*oasm.ParameterDoc
-	params   map[int]*oasm.ParameterDoc
-	headers  []*oasm.ParameterDoc
+	query    []oasm.Parameter
+	params   map[int]oasm.Parameter
+	headers  []oasm.Parameter
 }
 
 type EndpointSettings struct {
@@ -53,16 +53,16 @@ func NewEndpoint(operationId, method, path, summary, description string, tags ..
 			Middleware:       make([]func(http.Handler) http.Handler, 0, 2),
 			ResponseHandlers: make([]func(Data, *Response, error), 0, 2),
 		},
-		Doc: &oasm.OperationDoc{
+		Doc: oasm.Operation{
 			Tags:        tags,
 			Summary:     summary,
 			Description: description,
 			OperationId: operationId,
-			Parameters:  make([]*oasm.ParameterDoc, 0, 2),
-			Responses: &oasm.ResponsesDoc{
-				Codes: make(map[int]*oasm.ResponseDoc),
+			Parameters:  make([]oasm.Parameter, 0, 2),
+			Responses: oasm.Responses{
+				Codes: make(map[int]oasm.Response),
 			},
-			Security: make([]*oasm.SecurityRequirementDoc, 0, 1),
+			Security: make([]oasm.SecurityRequirement, 0, 1),
 		},
 	}
 }
@@ -76,8 +76,8 @@ func (e *Endpoint) Version(version int) *Endpoint {
 }
 
 // Attach a parameter doc.
-func (e *Endpoint) Parameter(in oasm.InRequest, name, description string, required bool, schema interface{}) *Endpoint {
-	param := &oasm.ParameterDoc{
+func (e *Endpoint) Parameter(in, name, description string, required bool, schema interface{}) *Endpoint {
+	param := oasm.Parameter{
 		Name:        name,
 		Description: description,
 		In:          in,
@@ -88,7 +88,7 @@ func (e *Endpoint) Parameter(in oasm.InRequest, name, description string, requir
 	switch in {
 	case oasm.InQuery:
 		if e.query == nil {
-			e.query = make([]*oasm.ParameterDoc, 1, 3)
+			e.query = make([]oasm.Parameter, 1, 3)
 			e.query[0] = param
 		} else {
 			e.query = append(e.query, param)
@@ -97,13 +97,13 @@ func (e *Endpoint) Parameter(in oasm.InRequest, name, description string, requir
 		loc, ok := e.parsedPath[name]
 		if ok {
 			if e.params == nil {
-				e.params = make(map[int]*oasm.ParameterDoc, 3)
+				e.params = make(map[int]oasm.Parameter, 3)
 			}
 			e.params[loc] = param
 		}
 	case oasm.InHeader:
 		if e.headers == nil {
-			e.headers = make([]*oasm.ParameterDoc, 1, 3)
+			e.headers = make([]oasm.Parameter, 1, 3)
 			e.headers[0] = param
 		} else {
 			e.headers = append(e.headers, param)
@@ -116,11 +116,13 @@ func (e *Endpoint) Parameter(in oasm.InRequest, name, description string, requir
 // `schema` will be used in the documentation, and `object` will be used for reading the body automatically.
 func (e *Endpoint) RequestBody(description string, required bool, schema, object interface{}) *Endpoint {
 	e.bodyType = reflect.TypeOf(object)
-	e.Doc.RequestBody = &oasm.RequestBodyDoc{
+	e.Doc.RequestBody = oasm.RequestBody{
 		Description: description,
 		Required:    required,
-		Content: oasm.MediaTypesDoc{
-			oasm.MimeJson: {Schema: schema},
+		Content: oasm.MediaTypesMap{
+			oasm.MimeJson: {
+				Schema: schema,
+			},
 		},
 	}
 	return e
@@ -128,11 +130,11 @@ func (e *Endpoint) RequestBody(description string, required bool, schema, object
 
 // Attach a response doc. Schema may be nil.
 func (e *Endpoint) Response(code int, description string, schema interface{}) *Endpoint {
-	r := &oasm.ResponseDoc{
+	r := oasm.Response{
 		Description: description,
 	}
 	if schema != nil {
-		r.Content = oasm.MediaTypesDoc{
+		r.Content = oasm.MediaTypesMap{
 			oasm.MimeJson: {
 				Schema: schema,
 			},
@@ -153,7 +155,7 @@ func (e *Endpoint) Deprecate(comment string) *Endpoint {
 
 // Attach a security doc.
 func (e *Endpoint) Security(name string, scopes ...string) *Endpoint {
-	e.Doc.Security = append(e.Doc.Security, &oasm.SecurityRequirementDoc{
+	e.Doc.Security = append(e.Doc.Security, oasm.SecurityRequirement{
 		Name:   name,
 		Scopes: scopes,
 	})
