@@ -6,7 +6,6 @@ import (
 	copy2 "github.com/otiai10/copy"
 	"github.com/tjbrockmeyer/oasm"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"path"
@@ -156,7 +155,6 @@ func NewOpenAPI(
 		}
 	}
 
-	log.Println(spec.dir)
 	return spec, http.FileServer(http.Dir(spec.dir)), nil
 }
 
