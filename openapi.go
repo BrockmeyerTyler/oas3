@@ -113,6 +113,8 @@ func NewOpenAPI(
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read the schema file: %v", err)
 	}
+	regex := regexp.MustCompile(`"\$ref"\s*:\s*"#/definitions/(.*?)"`)
+	contents = regex.ReplaceAll(contents, []byte(`"$$ref":"#/components/schemas/$1"`))
 	var file map[string]interface{}
 	err = json.Unmarshal(contents, &file)
 	if err != nil {
