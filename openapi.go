@@ -10,33 +10,64 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"runtime"
 )
 
+var specPath = "openapi.json"
+
+type HandlerFunc func(Data) (Response, error)
+type Middleware func(next HandlerFunc) HandlerFunc
+type ResponseHandler func(Data, Response, error) Response
+
 type OpenAPI struct {
 	Doc oasm.OpenAPIDoc
-	// Indent level of JSON responses. A level of 0 will not pretty-print.
-	JSONIndent int
-	dir        string
+	// Indent level of JSON responses. (Default: 2) A level of 0 will print condensed JSON.
+	JSONIndent      int
+	responseHandler ResponseHandler
+	dir             string
 }
 
-var specDir = "spec"
-var specPath = fmt.Sprintf("%s/openapi.json", specDir)
-
-// Create a new specification for your API
-// This will create the endpoints in the documentation and will create routes for them.
+// Create a new OpenAPI Specification with JSON Schemas and a Swagger UI.
 //
-// dir - A directory for hosting the spec, schemas, and SwaggerUI.
-func NewOpenAPI(title, description, url, version, dir string, tags []oasm.Tag) *OpenAPI {
-	if err := os.MkdirAll(path.Join(dir, specDir), os.ModePerm); err != nil && !os.IsExist(err) {
-		log.Printf("failed to create spec directory: %v\n", err)
-	}
-	return &OpenAPI{
+// This will:
+//   - Generate an OpenAPI Specification for the API inside the provided directory.
+//   - Create documentation and routes (via param:routeCreator) for all endpoints passed as arguments.
+//   - Add all definitions from a provided JSON Schema file into the generated spec.
+//   - Generate a Swagger UI in the target directory, returning a handler which can be used to mount the file server.
+//   - Add middleware for authorization or other needs to every endpoint, with the endpoint itself as context.
+//   - Add response handling middleware to every endpoint, for logging or other needs, after the endpoint has run.
+//
+// Parameters:
+//   title           - API title
+//   description     - API description
+//   url             - API URL location
+//   version         - API version in the format of (MAJOR.MINOR.PATCH)
+//   dir             - A directory for hosting the spec, schemas, and SwaggerUI - typically a folder like ./public
+//   schemaFilepath  - A filepath to a valid JSON Schema which contains `definitions` for objects to be used by the API
+//   tags            - A list of Tag objects for describing the sections of the API which hold endpoints
+//   endpoints       - A list of Endpoints that have been created for this API
+//   routeCreator    - A function which can mount an endpoint at an http path
+//   middleware      - A list of EndpointMiddleware functions to be run before each endpoint when they are called
+//                     * Useful for authorization, header pre-processing, and more.
+//                     * Use `nil` or an empty list to have no middleware.
+//   responseHandler - A function to read and/or modify the response after an endpoint call
+//                     * Useful for logging, metrics, notifications and more.
+//                     * Use `nil` to have no response handler.
+//
+// Returns:
+//   spec       - The specification object
+//   fileServer - The fileServer http.Handler that can be mounted to show a Swagger UI for the API
+//   err        - Any error that may have occurred
+func NewOpenAPI(
+	title, description, url, version, dir, schemaFilepath string,
+	tags []oasm.Tag, endpoints []*Endpoint, routeCreator func(method, path string, handler http.Handler),
+	middleware []Middleware, responseHandler ResponseHandler,
+) (spec *OpenAPI, fileServer http.Handler, err error) {
+	spec = &OpenAPI{
 		Doc: oasm.OpenAPIDoc{
 			OpenApi: "3.0.0",
-			Info: oasm.Info{
+			Info: &oasm.Info{
 				Title:       title,
 				Description: description,
 				Version:     version,
@@ -44,131 +75,87 @@ func NewOpenAPI(title, description, url, version, dir string, tags []oasm.Tag) *
 			Servers: []oasm.Server{{
 				Url:         url,
 				Description: title,
-				Variables:   nil,
 			}},
 			Tags:       tags,
 			Paths:      make(oasm.PathsMap),
 			Components: oasm.Components{},
 		},
-		dir: dir,
+		JSONIndent:      2,
+		responseHandler: responseHandler,
+		dir:             dir,
 	}
-}
+	if err := os.MkdirAll(dir, os.ModePerm); err != nil && !os.IsExist(err) {
+		return nil, nil, err
+	}
 
-// Add an amount of endpoints to the API.
-func (o *OpenAPI) AddEndpoints(routeCreator func(method, path string, handler http.HandlerFunc), endpoints ...*Endpoint) *OpenAPI {
+	// Create routes and docs for all endpoints
 	for _, e := range endpoints {
-		pathItem, ok := o.Doc.Paths[e.Settings.Path]
+		pathItem, ok := spec.Doc.Paths[e.Settings.Path]
 		if !ok {
 			pathItem = oasm.PathItem{
 				Methods: make(map[string]oasm.Operation)}
-			o.Doc.Paths[e.Settings.Path] = pathItem
+			spec.Doc.Paths[e.Settings.Path] = pathItem
 		}
 		pathItem.Methods[e.Settings.Method] = e.Doc
-		routeCreator(e.Settings.Method, e.Settings.Path, e.Run)
-		e.spec = o
+		handler := e.userDefinedFunc
+		if middleware != nil {
+			for i := len(middleware) - 1; i >= 0; i-- {
+				handler = middleware[i](handler)
+			}
+		}
+		routeCreator(e.Settings.Method, e.Settings.Path, http.HandlerFunc(e.Call))
+		e.fullyWrappedFunc = handler
+		e.spec = spec
 	}
-	return o
-}
 
-// Add global security requirements for the API
-func (o *OpenAPI) AddSecurityRequirement(name string, scopes ...string) {
-	o.Doc.Security = append(o.Doc.Security, oasm.SecurityRequirement{
-		Name:   name,
-		Scopes: scopes,
-	})
-}
-
-// Create a new security scheme of API key
-func (o *OpenAPI) AddAPIKey(loc, name, description, paramName string) {
-	if o.Doc.Components.SecuritySchemes == nil {
-		o.Doc.Components.SecuritySchemes = make(map[string]oasm.SecurityScheme)
-	}
-	o.Doc.Components.SecuritySchemes[name] = oasm.SecurityScheme{
-		Type: "apiKey",
-		In:   loc,
-		Name: paramName,
-	}
-}
-
-// Create a new security scheme of clientCredentials.
-func (o *OpenAPI) AddClientCredentialsOAuth(
-	name, description, tokenUrl, refreshUrl string,
-	scopes map[string]string) {
-	if o.Doc.Components.SecuritySchemes == nil {
-		o.Doc.Components.SecuritySchemes = make(map[string]oasm.SecurityScheme)
-	}
-	o.Doc.Components.SecuritySchemes[name] = oasm.SecurityScheme{
-		Type: "oauth2",
-		Flows: map[string]oasm.OAuthFlow{
-			"clientCredentials": {
-				TokenUrl:   tokenUrl,
-				RefreshUrl: refreshUrl,
-				Scopes:     scopes,
-			},
-		},
-	}
-}
-
-// Add a schema file to your documentation.
-// The schema file should have a top-most "definitions" property,
-// and the names contained within will be added directly into #/components/schemas.
-// They will be prepended by 'prefix' before creation.
-func (o *OpenAPI) AddSchemaFile(schemaFilepath, prefix string) error {
-	schemaFilename := filepath.Base(schemaFilepath)
+	// Copy schemas from schema file into spec.
 	contents, err := ioutil.ReadFile(schemaFilepath)
 	if err != nil {
-		return fmt.Errorf("failed to read the schema file: %v", err)
+		return nil, nil, fmt.Errorf("failed to read the schema file: %v", err)
 	}
 	var file map[string]interface{}
 	err = json.Unmarshal(contents, &file)
 	if err != nil {
-		return fmt.Errorf("failed to unmarshal the schema file: %v", err)
+		return nil, nil, fmt.Errorf("failed to unmarshal the schema file: %v", err)
 	}
 	defs, ok := file["definitions"]
 	if !ok {
-		return fmt.Errorf("schema files must contain a top-level 'definitions' property")
+		return nil, nil, fmt.Errorf("schema files must contain a top-level 'definitions' property")
 	}
 	defsMap, ok := defs.(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("'definitions' property of schema files must be an object")
+		return nil, nil, fmt.Errorf("'definitions' property of schema files must be an object")
 	}
-	if o.Doc.Components.Schemas == nil {
-		o.Doc.Components.Schemas = make(map[string]interface{})
+	if spec.Doc.Components.Schemas == nil {
+		spec.Doc.Components.Schemas = make(map[string]interface{})
 	}
-	for name := range defsMap {
-		o.Doc.Components.Schemas[fmt.Sprintf("%s%s", prefix, name)] =
-			Ref(fmt.Sprintf("%s#/definitions/%s", schemaFilename, name))
+	for name, value := range defsMap {
+		valueJson, _ := json.Marshal(value)
+		spec.Doc.Components.Schemas[name] = json.RawMessage(valueJson)
 	}
-	schemaCopy := fmt.Sprintf("%s/%s/%s", o.dir, specDir, schemaFilename)
-	_ = os.Remove(schemaCopy)
-	if err = os.Link(schemaFilepath, schemaCopy); err != nil {
-		return fmt.Errorf("failed to create a link to the schema file: %v", err)
-	}
-	return nil
-}
 
-// Publish your API using a Swagger UI. Writes your spec to the specified file.
-// Returns a File Server handler. This should be mounted with a call to http.StripPrefix()
-func (o *OpenAPI) CreateSwaggerUI() (fileServer http.Handler, err error) {
-	_, file, _, ok := runtime.Caller(0)
+	// Create Swagger UI
+	_, filePath, _, ok := runtime.Caller(0)
 	if !ok {
-		return nil, err
+		return nil, nil, err
 	}
-	if err = copy2.Copy(path.Join(path.Dir(file), "swagger-dist"), o.dir); err != nil {
-		return nil, fmt.Errorf("failed to copy swagger ui distribution: %v", err)
+	if err = copy2.Copy(path.Join(path.Dir(filePath), "swagger-dist"), spec.dir); err != nil {
+		return nil, nil, fmt.Errorf("failed to copy swagger ui distribution: %v", err)
 	}
-	indexHtml := fmt.Sprintf("%s/index.html", o.dir)
+	indexHtml := fmt.Sprintf("%s/index.html", spec.dir)
 	if contents, err := ioutil.ReadFile(indexHtml); err != nil {
-		return nil, fmt.Errorf("could not open 'index.html' in swagger directory: %s", err.Error())
+		return nil, nil, fmt.Errorf("could not open 'index.html' in swagger directory: %s", err.Error())
 	} else {
 		regex, _ := regexp.Compile(`url: ?(".*?"|'.*?')`)
 		newContents := regex.ReplaceAllLiteral(contents, []byte(fmt.Sprintf(`url: "./%s"`, specPath)))
 		err := ioutil.WriteFile(indexHtml, newContents, 644)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return http.FileServer(http.Dir(o.dir)), nil
+
+	log.Println(spec.dir)
+	return spec, http.FileServer(http.Dir(spec.dir)), nil
 }
 
 // Save the spec into the directory

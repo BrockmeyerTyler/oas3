@@ -25,6 +25,8 @@ type Data struct {
 	Body interface{}
 	// The endpoint which was called.
 	Endpoint *Endpoint
+	// A place to attach any kind of data using middleware.
+	Extra map[string]interface{}
 }
 
 type Response struct {

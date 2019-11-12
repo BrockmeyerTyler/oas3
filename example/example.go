@@ -1,22 +1,3 @@
-# oas - Open API Specification
-
-[![GoDoc](https://godoc.org/github.com/tjbrockmeyer/oas?status.svg)](https://godoc.org/github.com/tjbrockmeyer/oas)
-[![Build Status](https://travis-ci.com/tjbrockmeyer/oas.svg?branch=master)](https://travis-ci.com/tjbrockmeyer/oas)
-[![codecov](https://codecov.io/gh/tjbrockmeyer/oas/branch/master/graph/badge.svg)](https://codecov.io/gh/tjbrockmeyer/oas)
-
-Golang Open API Specification Version 3 simple API setup package  
-Create json endpoint specs inline with your code implementation.  
-This package specifically serves and accepts the `application/json` content type.
-
-UI is created using [SwaggerUI.](https://github.com/swagger-api/swagger-ui)
-
-The example below will create an API at http://localhost:5000 that has 1 endpoint, `GET /search` under 2 different tags.
-
-For API documentation, view the [GoDoc Page.](https://godoc.org/github.com/tjbrockmeyer/oas)  
-
-## Example: 
-#### `main.go`
-```go
 package main
 
 import (
@@ -57,7 +38,7 @@ func main() {
 			{Name: "Tag2", Description: "This is the second tag."},
 		}, endpoints, func(method, path string, handler http.Handler) {
 			endpointRouter.Path(path).Methods(method).Handler(handler)
-		}, []oas.EndpointMiddleware{
+		}, []oas.Middleware{
 			func(next oas.HandlerFunc) oas.HandlerFunc {
 				return func(data oas.Data) (response oas.Response, e error) {
 					log.Println("This runs first")
@@ -104,24 +85,3 @@ func main() {
 	log.Printf("Swagger Docs at \"http://%s/api/docs/\".\n", address)
 	log.Fatal(http.ListenAndServe(address, r))
 }
-```
-
-#### `./schemas.json`
-```json
-{
-  "definitions": {
-    "SearchResults": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["title", "description", "url"],
-        "properties": {
-          "title": {"type": "string"},
-          "description": {"type": "string"},
-          "url": {"type": "string"}
-        }
-      }
-    }
-  }
-}
-```

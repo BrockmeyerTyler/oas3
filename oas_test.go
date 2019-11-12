@@ -8,14 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path"
 	"regexp"
 	"strings"
 	"testing"
 )
-
-// TODO: cover endpoint middleware operations after composing with NewOpenAPI()
-// TODO: cover multiple endpoints not overwriting each other in OpenAPI.Endpoints()
 
 // util.go
 
@@ -68,14 +64,8 @@ func TestNewEndpoint(t *testing.T) {
 	summary := "this is a summary"
 	description := "this is a description"
 
-	e := NewEndpoint(operationId, method, epPath, summary, description, "TAG1", "TAG2")
-	if e.Settings.Middleware == nil {
-		t.Errorf("Middleware should not be nil")
-	}
-	if e.Settings.ResponseHandlers == nil {
-		t.Errorf("ResponseHandlers should not be nil")
-	}
-	if e.Settings.Run != nil {
+	e := NewEndpoint(operationId, method, epPath, summary, description, []string{"TAG1", "TAG2"})
+	if e.userDefinedFunc != nil {
 		t.Errorf("Run func should be nil")
 	}
 	if e.Settings.Path != epPath {
@@ -109,7 +99,12 @@ func TestNewEndpoint(t *testing.T) {
 }
 
 func newEndpoint() *Endpoint {
-	return NewEndpoint("GET", "/abc", "summary", "description", "TAG1")
+	return NewEndpoint("abc", "GET", "/abc", "summary", "description", []string{"TAG1"}).
+		Func(func(data Data) (response Response, e error) {
+			return Response{
+				Status: 200,
+			}, nil
+		})
 }
 
 func TestEndpoint_Deprecate(t *testing.T) {
@@ -131,10 +126,10 @@ func TestEndpoint_Func(t *testing.T) {
 		funcRan = true
 		return Response{}, nil
 	})
-	if e.Settings.Run == nil {
+	if e.userDefinedFunc == nil {
 		t.Errorf("Run func should not be nil")
 	}
-	_, _ = e.Settings.Run(Data{})
+	_, _ = e.userDefinedFunc(Data{})
 	if !funcRan {
 		t.Errorf("Run func did not get called properly")
 	}
@@ -148,8 +143,8 @@ func TestEndpoint_Version(t *testing.T) {
 		t.Errorf("Version (%v) should be equal to %v", e.Settings.Version, v)
 	}
 	versionPath := fmt.Sprintf("/v%v", v)
-	if !strings.HasSuffix(e.Settings.Path, versionPath) {
-		t.Errorf("Endpoint Path (%v) should end with the version: %v", e.Settings.Path, versionPath)
+	if !strings.HasPrefix(e.Settings.Path, versionPath) {
+		t.Errorf("Endpoint Path (%v) should start with the version: %v", e.Settings.Path, versionPath)
 	}
 	versionOpId := fmt.Sprintf("_v%v", v)
 	if !strings.HasSuffix(e.Doc.OperationId, versionOpId) {
@@ -251,13 +246,13 @@ func TestEndpoint_RequestBody(t *testing.T) {
 		}
 		return Response{}, nil
 	})
-	e.Run(w, r)
+	e.Call(w, r)
 }
 
 func TestEndpoint_Security(t *testing.T) {
 	name := "abc"
 	e := newEndpoint()
-	e.Security(name)
+	e.Security(name, nil)
 	if len(e.Doc.Security) != 1 {
 		t.Errorf("Expected Doc Security to have exactly 1 requirement")
 		s := e.Doc.Security[0]
@@ -266,7 +261,7 @@ func TestEndpoint_Security(t *testing.T) {
 		}
 	}
 
-	e.Security("def", "SCOPE1", "SCOPE2")
+	e.Security("def", []string{"SCOPE1", "SCOPE2"})
 	if len(e.Doc.Security) != 2 {
 		t.Errorf("Expected Doc Security to have exactly 2 requirements")
 	} else {
@@ -274,47 +269,6 @@ func TestEndpoint_Security(t *testing.T) {
 		if len(scopes) != 2 || scopes[0] != "SCOPE1" || scopes[1] != "SCOPE2" {
 			t.Errorf("Expected security requirement (%v) to be equal to: [SCOPE1,SCOPE2]", scopes)
 		}
-	}
-}
-
-func TestEndpoint_Middleware(t *testing.T) {
-	e := newEndpoint()
-	e.Middleware(func(h http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// some middleware logic
-		})
-	})
-	if len(e.Settings.Middleware) != 1 {
-		t.Errorf("Endpoint middleware list should have exactly 1 item")
-	}
-}
-
-func TestEndpoint_ResponseHandler(t *testing.T) {
-	e := newEndpoint()
-	e.ResponseHandler(func(d Data, res *Response, err error) {
-		if err != nil && strings.Contains(err.Error(), "this is a test") {
-			res.Status = 204
-			res.Body = nil
-		}
-	})
-
-	e.Func(func(d Data) (Response, error) {
-		return Response{}, nil
-	})
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/abc", nil)
-	e.Run(w, r)
-	if w.Code != 200 {
-		t.Errorf("Expected status code to be returned unmodified")
-	}
-
-	e.Func(func(d Data) (Response, error) {
-		return Response{}, fmt.Errorf("this is a test error")
-	})
-	w = httptest.NewRecorder()
-	e.Run(w, r)
-	if w.Code != 204 {
-		t.Errorf("Expected status code to have been handled by the response handler")
 	}
 }
 
@@ -328,7 +282,7 @@ func TestEndpoint_Run(t *testing.T) {
 		funcRan = true
 		return Response{}, nil
 	})
-	e.Run(w, r)
+	e.Call(w, r)
 	if !funcRan {
 		t.Errorf("Expected func to have been run")
 	}
@@ -341,7 +295,7 @@ func TestEndpoint_Run(t *testing.T) {
 	e.Func(func(d Data) (Response, error) {
 		return Response{Status: 400, Body: json.RawMessage(body)}, nil
 	})
-	e.Run(w, r)
+	e.Call(w, r)
 	if w.Code != 400 {
 		t.Errorf("Expected response to have the given status code of 400")
 	}
@@ -354,7 +308,7 @@ func TestEndpoint_Run(t *testing.T) {
 	e.Func(func(d Data) (Response, error) {
 		return Response{}, fmt.Errorf(`this is a test "error"`)
 	})
-	e.Run(w, r)
+	e.Call(w, r)
 	if w.Code != 500 {
 		t.Errorf("Expected response code during an error to have a status code of 500")
 	}
@@ -368,7 +322,7 @@ func TestEndpoint_Run(t *testing.T) {
 	e.Func(func(d Data) (Response, error) {
 		return Response{Body: json.RawMessage(`{"message":"bad json"`)}, nil
 	})
-	e.Run(w, r)
+	e.Call(w, r)
 	if w.Code != 500 {
 		t.Errorf("Expected response code when response is unable to be marshalled to have status of 500")
 	}
@@ -377,7 +331,7 @@ func TestEndpoint_Run(t *testing.T) {
 	e.Func(func(d Data) (Response, error) {
 		panic("test error")
 	})
-	e.Run(w, r)
+	e.Call(w, r)
 	if w.Code != 500 {
 		t.Errorf("Expected response code when panic is encountered to have status of 500")
 	}
@@ -387,7 +341,7 @@ func TestEndpoint_Run(t *testing.T) {
 		d.ResWriter.WriteHeader(204)
 		return Response{Ignore: true}, nil
 	})
-	e.Run(w, r)
+	e.Call(w, r)
 	if w.Code != 204 {
 		t.Errorf("Expected response to be ignored in favor of manual response writing. Status should be 204")
 	}
@@ -396,7 +350,7 @@ func TestEndpoint_Run(t *testing.T) {
 	r = httptest.NewRequest("POST", "/abc/123?kind=abc%20Kind", nil)
 	r.Header.Set("x-info", "abcInfo")
 	w = httptest.NewRecorder()
-	e = NewEndpoint("createABC", "POST", "/abc/{id}", "Update an ABC", "<= What he said.", "ABC").
+	e = NewEndpoint("createABC", "POST", "/abc/{id}", "Update an ABC", "<= What he said.", []string{"ABC"}).
 		Parameter(oasm.InPath, "id", "The ABC's ID.", true, stringSchema).
 		Parameter(oasm.InQuery, "kind", "The ABC's kind", true, stringSchema).
 		Parameter(oasm.InHeader, "x-info", "The ABC's info", true, stringSchema).
@@ -412,14 +366,31 @@ func TestEndpoint_Run(t *testing.T) {
 			}
 			return Response{}, nil
 		})
-	e.Run(w, r)
-
+	e.Call(w, r)
 }
 
 // openapi.go
 
-func newApi() *OpenAPI {
-	return NewOpenAPI("title", "description", "http://localhost", "1.0.0", "./test/public", []oasm.Tag{})
+func newApi(
+	endpoints []*Endpoint,
+	routeCreator func(method, path string, handler http.Handler),
+	middleware []Middleware, responseHandler ResponseHandler,
+) (*OpenAPI, http.Handler, error) {
+	if endpoints == nil {
+		endpoints = []*Endpoint{newEndpoint()}
+	}
+	if routeCreator == nil {
+		routeCreator = func(method, path string, handler http.Handler) {
+			// some logic here...
+		}
+	}
+	if middleware == nil {
+		middleware = make([]Middleware, 0)
+	}
+	return NewOpenAPI(
+		"title", "description", "http://localhost", "1.0.0", "./test/public", "./example/schemas.json",
+		[]oasm.Tag{{Name: "Tag1", Description: "The first tag"}},
+		endpoints, routeCreator, middleware, responseHandler)
 }
 
 func cleanupApi(o *OpenAPI) {
@@ -435,10 +406,41 @@ func TestNewOpenAPI(t *testing.T) {
 	tags := []oasm.Tag{
 		{Name: "Tag1", Description: "This is the first tag"},
 	}
-	//noinspection ALL
-	defer os.RemoveAll("./test/public")
+	schemaFilePath := "./example/schemas.json"
+	var middlewareRan, responseHandlerRan bool
 
-	o := NewOpenAPI(title, description, url, version, dir, tags)
+	e := newEndpoint()
+	o, fileServer, err := NewOpenAPI(
+		title, description, url, version, dir, schemaFilePath, tags, []*Endpoint{e},
+		func(method, path string, handler http.Handler) {
+			if method != e.Settings.Method || path != e.Settings.Path {
+				t.Errorf("Expected path (%s) and method (%s) to be equal to the endpoint's path (%s) and method (%s)",
+					path, method, e.Settings.Path, e.Settings.Method)
+			}
+		}, []Middleware{
+			func(next HandlerFunc) HandlerFunc {
+				return func(data Data) (response Response, e error) {
+					middlewareRan = true
+					return next(data)
+				}
+			},
+			func(next HandlerFunc) HandlerFunc {
+				return func(data Data) (response Response, e error) {
+					if !middlewareRan {
+						t.Errorf("Expected this middleware to have been run second, not first")
+					}
+					return next(data)
+				}
+			},
+		}, func(data Data, response Response, e error) Response {
+			responseHandlerRan = true
+			return response
+		})
+	defer cleanupApi(o)
+	if err != nil {
+		t.Error(err)
+		return
+	}
 	if o.dir != dir {
 		t.Errorf("Expected API dir (%s) to be equal to %s", o.dir, dir)
 	}
@@ -448,175 +450,35 @@ func TestNewOpenAPI(t *testing.T) {
 		t.Errorf("Expected API doc info (%+v) to have description '%s', version '%s' and title '%s'",
 			info, description, version, title)
 	}
-	if o.Doc.Servers == nil {
-		t.Errorf("Expected API doc servers to not be nil")
-	}
-	if o.Doc.Tags == nil {
-		t.Errorf("Expected API doc tags to not be nil")
-	}
-	if o.Doc.Paths == nil {
-		t.Errorf("Expected API doc paths to not be nil")
+
+	if pathItem, ok := o.Doc.Paths[e.Settings.Path]; !ok {
+		t.Errorf("Expected a path item to be created for the endpoint path")
+	} else if _, ok := pathItem.Methods[e.Settings.Method]; !ok {
+		t.Errorf("Expected an operation item to be created for the endpoint method")
 	}
 
-	_, err := os.Stat(dir)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/abc", nil)
+	e.Call(w, r)
+	if !middlewareRan {
+		t.Errorf("Expected middleware to have been run")
+	}
+	if !responseHandlerRan {
+		t.Errorf("Expected response handler to have been run")
+	}
+
+	_, err = os.Stat(dir)
 	if err != nil && os.IsNotExist(err) {
 		t.Errorf("Expected API directory to exist")
 	} else if err != nil {
 		t.Errorf("Unexpected error while checking for directory: %v", err)
 	}
 
-	_, err = os.Stat(path.Join(dir, "spec"))
+	_, err = os.Stat(dir)
 	if err != nil && os.IsNotExist(err) {
 		t.Errorf("Expected API spec directory to exist")
 	} else if err != nil {
 		t.Errorf("Unexpected error while checking for spec directory: %v", err)
-	}
-
-}
-
-func TestOpenAPI_Endpoints(t *testing.T) {
-	o := newApi()
-	defer cleanupApi(o)
-	e := newEndpoint()
-	o.AddEndpoints(func(method, path string, handler http.HandlerFunc) {
-		if method != e.Settings.Method || path != e.Settings.Path {
-			t.Errorf("Expected path (%s) and method (%s) to be equal to the endpoint's path (%s) and method (%s)",
-				path, method, e.Settings.Path, e.Settings.Method)
-		}
-	}, e)
-	if pathItem, ok := o.Doc.Paths[e.Settings.Path]; !ok {
-		t.Errorf("Expected a path item to be created for the endpoint path")
-	} else if _, ok := pathItem.Methods[e.Settings.Method]; !ok {
-		t.Errorf("Expected an operation item to be created for the endpoint method")
-	}
-}
-
-func TestOpenAPI_SecurityRequirement(t *testing.T) {
-	name := "secure"
-	o := newApi()
-	defer cleanupApi(o)
-	o.AddSecurityRequirement(name, "SCOPE1", "SCOPE2")
-	if len(o.Doc.Security) != 1 {
-		t.Errorf("Expected there to be exactly 1 security requirement")
-	}
-	s := o.Doc.Security[0]
-	if s.Name != name {
-		t.Errorf("Expected security requirement (%s) to be named %s", s.Name, name)
-	}
-	if len(s.Scopes) != 2 {
-		t.Errorf("Expected there to be exactly 2 scopes in the security requirement")
-	}
-	if s.Scopes[0] != "SCOPE1" || s.Scopes[1] != "SCOPE2" {
-		t.Errorf("Expected the security requirement scopes (%v) to be equal to [SCOPE1,SCOPE2]", s.Scopes)
-	}
-}
-
-func TestOpenAPI_NewAPIKey(t *testing.T) {
-	name := "key"
-	in := oasm.SecurityInHeader
-	description := "description"
-	paramName := "x-access-key"
-	o := newApi()
-	defer cleanupApi(o)
-	o.AddAPIKey(in, name, description, paramName)
-
-	if o.Doc.Components.SecuritySchemes == nil {
-		t.Errorf("Expected security schemes to not be nil")
-	} else if s, ok := o.Doc.Components.SecuritySchemes[name]; !ok {
-		t.Errorf("Expected in the API components (%+v) a defined security scheme for %s",
-			o.Doc.Components.SecuritySchemes, name)
-	} else if s.Name != paramName || s.Type != "apiKey" || s.In != in {
-		t.Errorf("Expected the security scheme (%+v) to have a name %s, a type %s, and in %s",
-			s, name, "apiKey", in)
-	}
-}
-
-func TestOpenAPI_NewClientCredentialsOAuth(t *testing.T) {
-	name := "ccoauth"
-	description := "description"
-	url := "token.url.com/oauth"
-	refreshUrl := "token.url.com/refresh"
-	scopes := map[string]string{
-		"SCOPE1": "description1",
-	}
-	o := newApi()
-	defer cleanupApi(o)
-	o.AddClientCredentialsOAuth(name, description, url, refreshUrl, scopes)
-
-	if o.Doc.Components.SecuritySchemes == nil {
-		t.Errorf("Expected security schemes to not be nil")
-	} else if s, ok := o.Doc.Components.SecuritySchemes[name]; !ok {
-		t.Errorf("Expected in the API components (%+v) a defined security scheme for %s",
-			o.Doc.Components.SecuritySchemes, name)
-	} else {
-		if s.Type != "oauth2" {
-			t.Errorf("Expected the security scheme (%s) to have a type of oauth2", s.Type)
-		}
-		if s.Flows == nil {
-			t.Errorf("Expected the security scheme to have non-nil flows")
-		} else if flow, ok := s.Flows["clientCredentials"]; !ok {
-			t.Errorf("Expected a flow to have been defined for clientCredentials")
-		} else {
-			if d, ok := flow.Scopes["SCOPE1"]; !ok || d != "description1" {
-				t.Errorf("Expected flow scopes (%v) to match %v", flow.Scopes, scopes)
-			}
-			if flow.RefreshUrl != refreshUrl || flow.TokenUrl != url {
-				t.Errorf("Expected flow tokenUrl (%s) and refreshUrl (%s) to equal %s and %s",
-					flow.TokenUrl, flow.RefreshUrl, url, refreshUrl)
-			}
-		}
-	}
-}
-
-func TestOpenAPI_AddSchemaFile(t *testing.T) {
-	o := newApi()
-	defer cleanupApi(o)
-	err := o.AddSchemaFile("./test/schemas.json", "prefix_")
-	if err != nil {
-		t.Errorf("Error while adding schema file: %v", err)
-	}
-	if o.Doc.Components.Schemas == nil {
-		t.Errorf("Expected schemas to not be nil")
-	}
-	ref := `{"$ref":"schemas.json#/definitions/SearchResults"}`
-	if searchResults, ok := o.Doc.Components.Schemas["prefix_SearchResults"]; !ok {
-		t.Errorf("Expected 'SearchResults' schema (%+v) to exist with prefix_", o.Doc.Components.Schemas)
-	} else if sr, ok := searchResults.(json.RawMessage); !ok {
-		t.Errorf("Expected 'SearchResults' to be convertable to a json.RawMessage")
-	} else if string(sr) != ref {
-		t.Errorf("Expected value of 'SearchResults' (%s) to be equal to %s", sr, ref)
-	}
-
-	_, err = os.Stat("./test/public/spec/schemas.json")
-	if err != nil && os.IsNotExist(err) {
-		t.Errorf("Expected schema to be copied into ./test/public/spec/")
-	} else if err != nil {
-		t.Errorf("Unexpected error while checking for schema copy: %v", err)
-	}
-
-	err = o.AddSchemaFile("./test/badSchema1.json", "")
-	if err == nil || !strings.Contains(err.Error(), "must contain") {
-		t.Error("Expected an error about a missing field: 'definitions'")
-	}
-
-	err = o.AddSchemaFile("./test/badSchema2.json", "")
-	if err == nil || !strings.Contains(err.Error(), "must be an object") {
-		t.Error("Expected an error about a field that must be an object: 'definitions'")
-	}
-
-	err = o.AddSchemaFile("./test/badSchema3.json", "")
-	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
-		t.Error("Expected an error about the file being malformed json")
-	}
-
-}
-
-func TestOpenAPI_CreateSwaggerUI(t *testing.T) {
-	o := newApi()
-	defer cleanupApi(o)
-	fileServer, err := o.CreateSwaggerUI()
-	if err != nil {
-		t.Errorf("Unexpected error while creating SwaggerUI: %v", err)
 	}
 
 	index := "./test/public/index.html"
@@ -628,7 +490,7 @@ func TestOpenAPI_CreateSwaggerUI(t *testing.T) {
 	} else if b, err := ioutil.ReadFile(index); err != nil {
 		t.Errorf("Unexpected error while reading from index.html: %v", err)
 	} else {
-		regex, _ := regexp.Compile(`url: "\./spec/openapi\.json"`)
+		regex, _ := regexp.Compile(`url: "\./openapi\.json"`)
 		if !regex.Match(b) {
 			t.Errorf("Expected the index.html API target url to be overwritten with the API's spec url")
 		}
@@ -648,13 +510,13 @@ func TestOpenAPI_CreateSwaggerUI(t *testing.T) {
 }
 
 func TestOpenAPI_Save(t *testing.T) {
-	o := newApi()
+	o, _, _ := newApi(nil, nil, nil, nil)
 	defer cleanupApi(o)
 
 	if err := o.Save(); err != nil {
 		t.Errorf("Unexpected error while saving the spec")
 	} else {
-		spec := "./test/public/spec/openapi.json"
+		spec := "./test/public/openapi.json"
 		_, err := os.Stat(spec)
 		if err != nil && os.IsNotExist(err) {
 			t.Errorf("Expected spec file to have been created at %s", spec)
