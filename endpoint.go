@@ -71,6 +71,11 @@ func NewEndpoint(operationId, method, path, summary, description string, tags []
 // Useful for authentication middleware.
 func (e *Endpoint) GetSecuritySchemes() map[*oasm.SecurityRequirement]oasm.SecurityScheme {
 	schemes := make(map[*oasm.SecurityRequirement]oasm.SecurityScheme)
+	if e.spec != nil && e.spec.Doc.Security != nil {
+		for _, requirement := range e.spec.Doc.Security {
+			schemes[&requirement] = e.spec.Doc.Components.SecuritySchemes[requirement.Name]
+		}
+	}
 	for _, requirement := range e.Doc.Security {
 		schemes[&requirement] = e.spec.Doc.Components.SecuritySchemes[requirement.Name]
 	}
