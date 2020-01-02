@@ -65,15 +65,15 @@ func TestNewEndpoint(t *testing.T) {
 	description := "this is a description"
 
 	e := NewEndpoint(operationId, method, epPath, summary, description, []string{"TAG1", "TAG2"})
-	if e.userDefinedFunc != nil {
+	if e.UserDefinedFunc != nil {
 		t.Errorf("Run func should be nil")
 	}
-	if e.Settings.Path != epPath {
-		t.Errorf("Expected path (%s) to be equal to %s", e.Settings.Path, epPath)
+	if e.path != epPath {
+		t.Errorf("Expected path (%s) to be equal to %s", e.path, epPath)
 	}
 	lowerMethod := strings.ToLower(method)
-	if e.Settings.Method != lowerMethod {
-		t.Errorf("Expected method (%s) to be equal to %s", e.Settings.Method, lowerMethod)
+	if e.method != lowerMethod {
+		t.Errorf("Expected method (%s) to be equal to %s", e.method, lowerMethod)
 	}
 	if e.Doc.OperationId != operationId {
 		t.Errorf("Expected OperationID (%s) to be equal to %s", e.Doc.OperationId, operationId)
@@ -126,10 +126,10 @@ func TestEndpoint_Func(t *testing.T) {
 		funcRan = true
 		return Response{}, nil
 	})
-	if e.userDefinedFunc == nil {
+	if e.UserDefinedFunc == nil {
 		t.Errorf("Run func should not be nil")
 	}
-	_, _ = e.userDefinedFunc(Data{})
+	_, _ = e.UserDefinedFunc(Data{})
 	if !funcRan {
 		t.Errorf("Run func did not get called properly")
 	}
@@ -139,12 +139,12 @@ func TestEndpoint_Version(t *testing.T) {
 	v := 1
 	e := newEndpoint()
 	e.Version(v)
-	if e.Settings.Version != v {
-		t.Errorf("Version (%v) should be equal to %v", e.Settings.Version, v)
+	if e.version != v {
+		t.Errorf("Version (%v) should be equal to %v", e.version, v)
 	}
 	versionPath := fmt.Sprintf("/v%v", v)
-	if !strings.HasPrefix(e.Settings.Path, versionPath) {
-		t.Errorf("Endpoint Path (%v) should start with the version: %v", e.Settings.Path, versionPath)
+	if !strings.HasPrefix(e.path, versionPath) {
+		t.Errorf("Endpoint Path (%v) should start with the version: %v", e.path, versionPath)
 	}
 	versionOpId := fmt.Sprintf("_v%v", v)
 	if !strings.HasSuffix(e.Doc.OperationId, versionOpId) {
@@ -413,9 +413,9 @@ func TestNewOpenAPI(t *testing.T) {
 	o, fileServer, err := NewOpenAPI(
 		title, description, url, version, dir, schemaFilePath, tags, []*Endpoint{e},
 		func(method, path string, handler http.Handler) {
-			if method != e.Settings.Method || path != e.Settings.Path {
+			if method != e.method || path != e.path {
 				t.Errorf("Expected path (%s) and method (%s) to be equal to the endpoint's path (%s) and method (%s)",
-					path, method, e.Settings.Path, e.Settings.Method)
+					path, method, e.path, e.method)
 			}
 		}, []Middleware{
 			func(next HandlerFunc) HandlerFunc {
@@ -451,9 +451,9 @@ func TestNewOpenAPI(t *testing.T) {
 			info, description, version, title)
 	}
 
-	if pathItem, ok := o.Doc.Paths[e.Settings.Path]; !ok {
+	if pathItem, ok := o.Doc.Paths[e.path]; !ok {
 		t.Errorf("Expected a path item to be created for the endpoint path")
-	} else if _, ok := pathItem.Methods[e.Settings.Method]; !ok {
+	} else if _, ok := pathItem.Methods[e.method]; !ok {
 		t.Errorf("Expected an operation item to be created for the endpoint method")
 	}
 

@@ -89,20 +89,20 @@ func NewOpenAPI(
 
 	// Create routes and docs for all endpoints
 	for _, e := range endpoints {
-		pathItem, ok := spec.Doc.Paths[e.Settings.Path]
+		pathItem, ok := spec.Doc.Paths[e.path]
 		if !ok {
 			pathItem = oasm.PathItem{
 				Methods: make(map[string]oasm.Operation)}
-			spec.Doc.Paths[e.Settings.Path] = pathItem
+			spec.Doc.Paths[e.path] = pathItem
 		}
-		pathItem.Methods[e.Settings.Method] = e.Doc
-		handler := e.userDefinedFunc
+		pathItem.Methods[e.method] = e.Doc
+		handler := e.UserDefinedFunc
 		if middleware != nil {
 			for i := len(middleware) - 1; i >= 0; i-- {
 				handler = middleware[i](handler)
 			}
 		}
-		routeCreator(e.Settings.Method, e.Settings.Path, http.HandlerFunc(e.Call))
+		routeCreator(e.method, e.path, http.HandlerFunc(e.Call))
 		e.fullyWrappedFunc = handler
 		e.spec = spec
 	}

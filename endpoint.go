@@ -14,11 +14,22 @@ import (
 )
 
 type Endpoint struct {
-	Settings *EndpointSettings
-	Doc      oasm.Operation
+	// The operation documentation for this endpoint.
+	Doc oasm.Operation
+
+	// Options that can be read by middleware to add items to the request data before it gets to this endpoint.
+	Options map[string]interface{}
+
+	// The function defined during endpoint creation via Endpoint.Func().
+	// During testing, it may be useful to call the function directly, or
+	// to override this value by wrapping with some testing middleware
+	UserDefinedFunc HandlerFunc
+
+	path    string
+	method  string
+	version int
 
 	fullyWrappedFunc HandlerFunc
-	userDefinedFunc  HandlerFunc
 	spec             *OpenAPI
 	parsedPath       map[string]int
 
@@ -26,12 +37,6 @@ type Endpoint struct {
 	query    []oasm.Parameter
 	params   map[int]oasm.Parameter
 	headers  []oasm.Parameter
-}
-
-type EndpointSettings struct {
-	Path    string
-	Method  string
-	Version int
 }
 
 // Create a new endpoint for your API, supplying the mandatory arguments as necessary.
@@ -45,10 +50,6 @@ func NewEndpoint(operationId, method, path, summary, description string, tags []
 		}
 	}
 	return &Endpoint{
-		Settings: &EndpointSettings{
-			Method: strings.ToLower(method),
-			Path:   path,
-		},
 		Doc: oasm.Operation{
 			Tags:        tags,
 			Summary:     summary,
@@ -60,11 +61,19 @@ func NewEndpoint(operationId, method, path, summary, description string, tags []
 			},
 			Security: make([]oasm.SecurityRequirement, 0, 1),
 		},
+		Options:    make(map[string]interface{}, 3),
+		path:       path,
+		method:     strings.ToLower(method),
 		parsedPath: parsedPath,
 		query:      make([]oasm.Parameter, 0, 3),
 		params:     make(map[int]oasm.Parameter, 3),
 		headers:    make([]oasm.Parameter, 0, 3),
 	}
+}
+
+// Returns settings of the endpoint that are not stored explicitly in the operation documentation.
+func (e *Endpoint) Settings() (method, path string, version int) {
+	return e.method, e.path, e.version
 }
 
 // Get a map of Security Requirements for this endpoint to their respective Security Schemes.
@@ -82,14 +91,21 @@ func (e *Endpoint) GetSecuritySchemes() map[*oasm.SecurityRequirement]oasm.Secur
 	return schemes
 }
 
+// Add some options to the endpoint.
+// These can be processed by custom middleware via the Endpoint.Options map.
+func (e *Endpoint) Option(key string, value interface{}) *Endpoint {
+	e.Options[key] = value
+	return e
+}
+
 // Set the version of this endpoint, updating the path to correspond to it
 func (e *Endpoint) Version(version int) *Endpoint {
-	if version <= 0 || e.Settings.Version != 0 {
+	if version <= 0 || e.version != 0 {
 		return e
 	}
 	e.Doc.OperationId += fmt.Sprintf("_v%v", version)
-	e.Settings.Path = fmt.Sprintf("/v%v", version) + e.Settings.Path
-	e.Settings.Version = version
+	e.path = fmt.Sprintf("/v%v", version) + e.path
+	e.version = version
 	return e
 }
 
@@ -110,7 +126,7 @@ func (e *Endpoint) Parameter(in, name, description string, required bool, schema
 		loc, ok := e.parsedPath[name]
 		if !ok {
 			log.Printf("ERROR: path parameter %s provided in %s %s docs, but not provided in route",
-				name, e.Settings.Method, e.Settings.Path)
+				name, e.path, e.path)
 		} else {
 			e.params[loc] = param
 		}
@@ -177,7 +193,7 @@ func (e *Endpoint) Security(name string, scopes []string) *Endpoint {
 
 // Attach a function to run when calling this endpoint
 func (e *Endpoint) Func(f HandlerFunc) *Endpoint {
-	e.userDefinedFunc = f
+	e.UserDefinedFunc = f
 	return e
 }
 
@@ -228,14 +244,14 @@ func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("endpoint error (%s %s) at marshal body: %s\n\tobject: %v",
-			e.Settings.Method, e.Settings.Path, err, res.Body)
+			e.method, e.method, err, res.Body)
 		res.Status = 500
 		b = errorToJSON(err)
 	}
 
 	w.WriteHeader(res.Status)
 	if _, err = w.Write(b); err != nil {
-		log.Printf("endpoint error (%s %s) at write response: %s", e.Settings.Method, e.Settings.Path, err)
+		log.Printf("endpoint error (%s %s) at write response: %s", e.method, e.path, err)
 	}
 }
 
@@ -292,15 +308,15 @@ func (e *Endpoint) runUserDefinedFunc(data Data) (res Response, err error) {
 		panicErr := recover()
 		if panicErr != nil {
 			err = fmt.Errorf("a fatal error occurred: %v", panicErr)
-			log.Printf("endpoint panic (%s %s): %s\n", e.Settings.Method, e.Settings.Path, panicErr)
+			log.Printf("endpoint panic (%s %s): %s\n", e.method, e.path, panicErr)
 			debug.PrintStack()
 		}
 	}()
-	if e.userDefinedFunc == nil {
+	if e.UserDefinedFunc == nil {
 		return res, fmt.Errorf("endpoint function is not defined")
 	}
 	if e.spec == nil {
-		return e.userDefinedFunc(data)
+		return e.UserDefinedFunc(data)
 	}
 	return e.fullyWrappedFunc(data)
 }

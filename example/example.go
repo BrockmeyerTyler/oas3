@@ -52,7 +52,8 @@ func main() {
 				}
 			},
 		}, func(data oas.Data, response oas.Response, e error) oas.Response {
-			log.Println(data.Endpoint.Settings.Method, data.Endpoint.Settings.Path, "| response:", response.Status)
+			method, path, version := data.Endpoint.Settings()
+			log.Println(method, path, version, "| response:", response.Status)
 			return response
 		})
 	if err != nil {
