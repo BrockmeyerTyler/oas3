@@ -95,8 +95,10 @@ func NewOpenAPI(
 		return nil, nil, err
 	} else {
 		log.Println(parsedUrl.Path)
-		if len(parsedUrl.Path) > 0 && parsedUrl.Path != "/" {
-			spec.basePathLength = len(strings.Split(parsedUrl.Path, "/"))
+		for _, s := range strings.Split(parsedUrl.Path, "/") {
+			if len(s) > 0 {
+				spec.basePathLength += 1
+			}
 		}
 	}
 
