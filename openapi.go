@@ -6,11 +6,14 @@ import (
 	copy2 "github.com/otiai10/copy"
 	"github.com/tjbrockmeyer/oasm"
 	"io/ioutil"
+	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"regexp"
 	"runtime"
+	"strings"
 )
 
 var specPath = "openapi.json"
@@ -25,6 +28,7 @@ type OpenAPI struct {
 	JSONIndent      int
 	responseHandler ResponseHandler
 	dir             string
+	basePathLength  int
 }
 
 // Create a new OpenAPI Specification with JSON Schemas and a Swagger UI.
@@ -59,7 +63,7 @@ type OpenAPI struct {
 //   fileServer - The fileServer http.Handler that can be mounted to show a Swagger UI for the API
 //   err        - Any error that may have occurred
 func NewOpenAPI(
-	title, description, url, version, dir, schemaFilepath string,
+	title, description, serverUrl, version, dir, schemaFilepath string,
 	tags []oasm.Tag, endpoints []*Endpoint, routeCreator func(method, path string, handler http.Handler),
 	middleware []Middleware, responseHandler ResponseHandler,
 ) (spec *OpenAPI, fileServer http.Handler, err error) {
@@ -72,7 +76,7 @@ func NewOpenAPI(
 				Version:     version,
 			},
 			Servers: []oasm.Server{{
-				Url:         url,
+				Url:         serverUrl,
 				Description: title,
 			}},
 			Tags:       tags,
@@ -85,6 +89,15 @@ func NewOpenAPI(
 	}
 	if err := os.MkdirAll(dir, os.ModePerm); err != nil && !os.IsExist(err) {
 		return nil, nil, err
+	}
+
+	if parsedUrl, err := url.Parse(serverUrl); err != nil {
+		return nil, nil, err
+	} else {
+		log.Println(parsedUrl.Path)
+		if len(parsedUrl.Path) > 0 && parsedUrl.Path != "/" {
+			spec.basePathLength = len(strings.Split(parsedUrl.Path, "/"))
+		}
 	}
 
 	// Create routes and docs for all endpoints

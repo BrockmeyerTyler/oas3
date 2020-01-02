@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/gorilla/mux"
 	"github.com/tjbrockmeyer/oas"
 	"github.com/tjbrockmeyer/oasm"
@@ -24,6 +25,17 @@ func main() {
 				// Your search logic here...
 				return oas.Response{
 					Status: 204,
+				}, nil
+			}),
+		oas.NewEndpoint("getItem", "GET", "/item/{item}", "Get an Item", "Like, really get an Item if you want it", []string{"Tag1"}).
+			Version(2).
+			Parameter("path", "item", "the item to get", true, strSchema).
+			Response(200, "Results were found", oas.SchemaRef("SearchResults")).
+			Response(204, "Item does not exist", nil).
+			Func(func(data oas.Data) (oas.Response, error) {
+				return oas.Response{
+					Status: 200,
+					Body:   json.RawMessage(fmt.Sprintf(`"searched item: '%s'"`, data.Params["item"])),
 				}, nil
 			}),
 	}

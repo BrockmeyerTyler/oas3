@@ -283,13 +283,17 @@ func (e *Endpoint) parseRequest(data *Data) error {
 	}
 
 	if len(e.params) > 0 {
+		var basePathLength int
+		if e.spec != nil {
+			basePathLength = e.spec.basePathLength
+		}
 		splitPath := strings.Split(data.Req.URL.Path, "/")
 		log.Println("splitPath:", splitPath)
 		for loc, param := range e.params {
 			if len(splitPath) <= loc {
 				continue
 			}
-			data.Params[param.Name] = splitPath[loc]
+			data.Params[param.Name] = splitPath[basePathLength+loc]
 		}
 	}
 
