@@ -209,15 +209,7 @@ func (e *Endpoint) Func(f HandlerFunc) *Endpoint {
 // Call this endpoint manually
 // `Call` should only be used for testing purposes mostly.
 func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
-	data := Data{
-		Req:       r,
-		ResWriter: w,
-		Query:     make(map[string]interface{}, len(e.query)),
-		Params:    make(map[string]interface{}, len(e.params)),
-		Headers:   make(map[string]interface{}, len(e.headers)),
-		Endpoint:  e,
-		Extra:     make(map[string]interface{}),
-	}
+	data := NewData(w, r, e)
 	var res Response
 
 	err := e.parseRequest(&data)

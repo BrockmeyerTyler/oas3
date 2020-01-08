@@ -24,6 +24,18 @@ type typedParameter struct {
 	oasm.Parameter
 }
 
+func NewData(w http.ResponseWriter, r *http.Request, e *Endpoint) Data {
+	return Data{
+		Req:       r,
+		ResWriter: w,
+		Query:     make(MapAny, len(e.query)),
+		Params:    make(MapAny, len(e.params)),
+		Headers:   make(MapAny, len(e.headers)),
+		Endpoint:  e,
+		Extra:     make(MapAny),
+	}
+}
+
 type Data struct {
 	// The HTTP Request that called this endpoint.
 	Req *http.Request
@@ -32,17 +44,17 @@ type Data struct {
 	//   return Response{Ignore:true}.
 	ResWriter http.ResponseWriter
 	// The query parameters passed in the url which are defined in the documentation for this endpoint.
-	Query map[string]interface{}
+	Query MapAny
 	// The path parameters passed in the url which are defined in the documentation for this endpoint.
-	Params map[string]interface{}
+	Params MapAny
 	// The headers passed in the request which are defined in the documentation for this endpoint.
-	Headers map[string]interface{}
+	Headers MapAny
 	// The request body, marshaled into the type of object which was set up on this endpoint during initialization.
 	Body interface{}
 	// The endpoint which was called.
 	Endpoint *Endpoint
 	// A place to attach any kind of data using middleware.
-	Extra map[string]interface{}
+	Extra MapAny
 }
 
 type Response struct {
@@ -55,4 +67,13 @@ type Response struct {
 	Body interface{}
 	// The headers to send back in the response.
 	Headers map[string]string
+}
+
+type MapAny map[string]interface{}
+
+func (m MapAny) GetOrElse(key string, elseValue interface{}) interface{} {
+	if item, ok := m[key]; ok {
+		return item
+	}
+	return elseValue
 }
