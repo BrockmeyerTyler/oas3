@@ -8,44 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 )
-
-// util.go
-
-func TestRef(t *testing.T) {
-	ref := Ref("abc")
-	expected := `{"$ref":"abc"}`
-	if string(ref) != expected {
-		t.Errorf("Expected %s, Got: %s", expected, ref)
-	}
-}
-
-func TestSchemaRef(t *testing.T) {
-	ref := SchemaRef("abc")
-	expected := `{"$ref":"#/components/schemas/abc"}`
-	if string(ref) != expected {
-		t.Errorf("Expected %s, Got: %s", expected, ref)
-	}
-}
-
-func TestArrayOfSchemaRef(t *testing.T) {
-	arrRef := ArrayOfSchemaRef("abc")
-	expected := `{"type":"array","items":{"$ref":"#/components/schemas/abc"}}`
-	if string(arrRef) != expected {
-		t.Errorf("Expected %s, Got: %s", expected, arrRef)
-	}
-}
-
-func TestCompRef(t *testing.T) {
-	ref := CompRef("abc")
-	expected := `{"$ref":"#/components/abc"}`
-	if string(ref) != expected {
-		t.Errorf("Expected %s, Got: %s", expected, ref)
-	}
-}
 
 func TestErrorToJSON(t *testing.T) {
 	j := errorToJSON(fmt.Errorf(`this is an "error"`))
@@ -158,7 +125,7 @@ func TestEndpoint_Parameter(t *testing.T) {
 	description := "this is a description"
 	schema := json.RawMessage(`{"type":"string"}`)
 	e := newEndpoint()
-	e.Parameter(loc, name, description, true, schema)
+	e.Parameter(loc, name, description, true, schema, reflect.String)
 	if len(e.Doc.Parameters) != 1 {
 		t.Errorf("There should be exactly 1 parameter")
 	}
@@ -351,9 +318,9 @@ func TestEndpoint_Run(t *testing.T) {
 	r.Header.Set("x-info", "abcInfo")
 	w = httptest.NewRecorder()
 	e = NewEndpoint("createABC", "POST", "/abc/{id}", "Update an ABC", "<= What he said.", []string{"ABC"}).
-		Parameter(oasm.InPath, "id", "The ABC's ID.", true, stringSchema).
-		Parameter(oasm.InQuery, "kind", "The ABC's kind", true, stringSchema).
-		Parameter(oasm.InHeader, "x-info", "The ABC's info", true, stringSchema).
+		Parameter(oasm.InPath, "id", "The ABC's ID.", true, stringSchema, reflect.String).
+		Parameter(oasm.InQuery, "kind", "The ABC's kind", true, stringSchema, reflect.String).
+		Parameter(oasm.InHeader, "x-info", "The ABC's info", true, stringSchema, reflect.String).
 		Func(func(d Data) (Response, error) {
 			if len(d.Query) != 1 || d.Query["kind"] != "abc Kind" {
 				t.Errorf("Expected Data.Query to have len()=1 and id=abc Kind. Got %v", d.Query)
@@ -388,7 +355,7 @@ func newApi(
 		middleware = make([]Middleware, 0)
 	}
 	return NewOpenAPI(
-		"title", "description", "http://localhost", "1.0.0", "./test/public", "./example/schemas.json",
+		"title", "description", "http://localhost", "1.0.0", "./test/public", "./example/schemas",
 		[]oasm.Tag{{Name: "Tag1", Description: "The first tag"}},
 		endpoints, routeCreator, middleware, responseHandler)
 }
@@ -406,12 +373,12 @@ func TestNewOpenAPI(t *testing.T) {
 	tags := []oasm.Tag{
 		{Name: "Tag1", Description: "This is the first tag"},
 	}
-	schemaFilePath := "./example/schemas.json"
+	schemaDirPath := "./example/schemas"
 	var middlewareRan, responseHandlerRan bool
 
 	e := newEndpoint()
 	o, fileServer, err := NewOpenAPI(
-		title, description, url, version, dir, schemaFilePath, tags, []*Endpoint{e},
+		title, description, url, version, dir, schemaDirPath, tags, []*Endpoint{e},
 		func(method, path string, handler http.Handler) {
 			if method != e.method || path != e.path {
 				t.Errorf("Expected path (%s) and method (%s) to be equal to the endpoint's path (%s) and method (%s)",

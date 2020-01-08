@@ -4,19 +4,24 @@ import (
 	"encoding/json"
 	"fmt"
 	copy2 "github.com/otiai10/copy"
+	"github.com/pkg/errors"
 	"github.com/tjbrockmeyer/oasm"
+	"github.com/xeipuuv/gojsonschema"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
 )
 
 var specPath = "openapi.json"
+var refRegex = regexp.MustCompile(`"\$ref"\s*:\s*"file:/[^"]*/(.*?)\.json"`)
+var swaggerUrlRegex = regexp.MustCompile(`url: ?(".*?"|'.*?')`)
 
 type HandlerFunc func(Data) (Response, error)
 type Middleware func(next HandlerFunc) HandlerFunc
@@ -47,7 +52,7 @@ type OpenAPI struct {
 //   url             - API URL location
 //   version         - API version in the format of (MAJOR.MINOR.PATCH)
 //   dir             - A directory for hosting the spec, schemas, and SwaggerUI - typically a folder like ./public
-//   schemaFilepath  - A filepath to a valid JSON Schema which contains `definitions` for objects to be used by the API
+//   schemasDir      - A path to a directory of valid JSON Schemas for objects to be used by the API
 //   tags            - A list of Tag objects for describing the sections of the API which hold endpoints
 //   endpoints       - A list of Endpoints that have been created for this API
 //   routeCreator    - A function which can mount an endpoint at an http path
@@ -63,7 +68,7 @@ type OpenAPI struct {
 //   fileServer - The fileServer http.Handler that can be mounted to show a Swagger UI for the API
 //   err        - Any error that may have occurred
 func NewOpenAPI(
-	title, description, serverUrl, version, dir, schemaFilepath string,
+	title, description, serverUrl, version, dir, schemasDir string,
 	tags []oasm.Tag, endpoints []*Endpoint, routeCreator func(method, path string, handler http.Handler),
 	middleware []Middleware, responseHandler ResponseHandler,
 ) (spec *OpenAPI, fileServer http.Handler, err error) {
@@ -102,8 +107,147 @@ func NewOpenAPI(
 		}
 	}
 
-	// Create routes and docs for all endpoints
+	if spec.Doc.Components.Schemas == nil {
+		spec.Doc.Components.Schemas = make(map[string]interface{})
+	}
+
+	// Gather all schemas, creating separate swagger schemas.
+	err = filepath.Walk(schemasDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		name := info.Name()
+		if !strings.HasSuffix(name, ".json") {
+			return nil
+		}
+		typeName := name[:len(name)-5]
+		contents, err := ioutil.ReadFile(path)
+		swaggerSchemaContents := refRegex.ReplaceAll(contents, []byte(`"$$ref":"#/components/schemas/$1"`))
+		spec.Doc.Components.Schemas[typeName] = json.RawMessage(swaggerSchemaContents)
+		if err != nil {
+			return errors.WithMessage(err, "failed to parse json schema for "+typeName)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, errors.WithMessage(err, "failed to read the schema directory")
+	}
+
 	for _, e := range endpoints {
+
+		// Create a schema for the data object.
+		querySchema := map[string]interface{}{
+			"type":       "object",
+			"required":   make([]string, 0, 3),
+			"properties": make(map[string]interface{}),
+		}
+		paramsSchema := map[string]interface{}{
+			"type":       "object",
+			"required":   make([]string, 0, 3),
+			"properties": make(map[string]interface{}),
+		}
+		headersSchema := map[string]interface{}{
+			"type":       "object",
+			"required":   make([]string, 0, 3),
+			"properties": make(map[string]interface{}),
+		}
+
+		dataSchema := map[string]interface{}{
+			"type": "object",
+			"required": []string{
+				"Query",
+				"Params",
+				"Headers",
+			},
+			"properties": map[string]interface{}{
+				"Query":   querySchema,
+				"Params":  paramsSchema,
+				"Headers": headersSchema,
+			},
+		}
+
+		// Create schema for request body.
+		if e.Doc.RequestBody != nil {
+			b := e.Doc.RequestBody
+			bodyContent := b.Content["application/json"]
+
+			// Resolve references
+			if ref, ok := bodyContent.Schema.(Ref); ok {
+				bodyContent.Schema = ref.toSwaggerSchema()
+				e.Doc.RequestBody.Content["application/json"] = bodyContent
+				dataSchema["properties"].(map[string]interface{})["Body"] = ref.toJSONSchema(schemasDir)
+			} else {
+				dataSchema["properties"].(map[string]interface{})["Body"] = bodyContent.Schema
+			}
+
+			// Set schema attributes.
+			if b.Required {
+				dataSchema["required"] = append(dataSchema["required"].([]string), "Body")
+			}
+		}
+
+		// Create schemas for parameters.
+		for i, p := range e.Doc.Parameters {
+			var addToSchema *map[string]interface{}
+			var jsonSchema interface{}
+
+			switch p.In {
+			case oasm.InQuery:
+				addToSchema = &querySchema
+			case oasm.InPath:
+				addToSchema = &paramsSchema
+			case oasm.InHeader:
+				addToSchema = &headersSchema
+			default:
+				return nil, nil, errors.New("invalid value for 'in' on parameter: " + p.Name)
+			}
+
+			// Resolve references.
+			if ref, ok := p.Schema.(Ref); ok {
+				e.Doc.Parameters[i].Schema = ref.toSwaggerSchema()
+				jsonSchema = ref.toJSONSchema(schemasDir)
+			} else {
+				jsonSchema = p.Schema
+			}
+
+			// Set schema attributes.
+			(*addToSchema)["properties"].(map[string]interface{})[p.Name] = jsonSchema
+			if p.Required {
+				(*addToSchema)["required"] = append((*addToSchema)["required"].([]string), p.Name)
+			}
+		}
+
+		// Save the schema to the endpoint.
+		e.dataSchema, err = gojsonschema.NewSchema(gojsonschema.NewGoLoader(dataSchema))
+		if err != nil {
+			return nil, nil, errors.WithMessage(err, "failed to load dataSchema for endpoint: "+e.Doc.OperationId)
+		}
+
+		// Create schemas for response codes
+		for code, response := range e.Doc.Responses.Codes {
+			var jsonSchemaLoader interface{}
+			responseContent := response.Content["application/json"]
+			if responseContent.Schema == nil {
+				continue
+			}
+			if ref, ok := responseContent.Schema.(Ref); ok {
+				responseContent.Schema = ref.toSwaggerSchema()
+				response.Content["application/json"] = responseContent
+				e.Doc.Responses.Codes[code] = response
+				jsonSchemaLoader = ref.toJSONSchema(schemasDir)
+			} else {
+				jsonSchemaLoader = responseContent.Schema
+			}
+
+			e.responseSchemas[code], err = gojsonschema.NewSchema(gojsonschema.NewGoLoader(jsonSchemaLoader))
+			if err != nil {
+				log.Println(string(jsonSchemaLoader.(json.RawMessage)))
+				return nil, nil, errors.WithMessagef(
+					err, "failed to load response schema: (%s, %v)", e.Doc.OperationId, code)
+			}
+		}
+
+		// Create routes and docs for all endpoints
 		pathItem, ok := spec.Doc.Paths[e.path]
 		if !ok {
 			pathItem = oasm.PathItem{
@@ -122,34 +266,6 @@ func NewOpenAPI(
 		e.spec = spec
 	}
 
-	// Copy schemas from schema file into spec.
-	contents, err := ioutil.ReadFile(schemaFilepath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to read the schema file: %v", err)
-	}
-	regex := regexp.MustCompile(`"\$ref"\s*:\s*"#/definitions/(.*?)"`)
-	contents = regex.ReplaceAll(contents, []byte(`"$$ref":"#/components/schemas/$1"`))
-	var file map[string]interface{}
-	err = json.Unmarshal(contents, &file)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to unmarshal the schema file: %v", err)
-	}
-	defs, ok := file["definitions"]
-	if !ok {
-		return nil, nil, fmt.Errorf("schema files must contain a top-level 'definitions' property")
-	}
-	defsMap, ok := defs.(map[string]interface{})
-	if !ok {
-		return nil, nil, fmt.Errorf("'definitions' property of schema files must be an object")
-	}
-	if spec.Doc.Components.Schemas == nil {
-		spec.Doc.Components.Schemas = make(map[string]interface{})
-	}
-	for name, value := range defsMap {
-		valueJson, _ := json.Marshal(value)
-		spec.Doc.Components.Schemas[name] = json.RawMessage(valueJson)
-	}
-
 	// Create Swagger UI
 	_, filePath, _, ok := runtime.Caller(0)
 	if !ok {
@@ -162,8 +278,7 @@ func NewOpenAPI(
 	if contents, err := ioutil.ReadFile(indexHtml); err != nil {
 		return nil, nil, fmt.Errorf("could not open 'index.html' in swagger directory: %s", err.Error())
 	} else {
-		regex, _ := regexp.Compile(`url: ?(".*?"|'.*?')`)
-		newContents := regex.ReplaceAllLiteral(contents, []byte(fmt.Sprintf(`url: "./%s"`, specPath)))
+		newContents := swaggerUrlRegex.ReplaceAllLiteral(contents, []byte(fmt.Sprintf(`url: "./%s"`, specPath)))
 		err := ioutil.WriteFile(indexHtml, newContents, 644)
 		if err != nil {
 			return nil, nil, err

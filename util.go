@@ -3,10 +3,26 @@ package oas
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/tjbrockmeyer/oasm"
 	"net/http"
-	"strconv"
-	"strings"
+	"reflect"
 )
+
+// Use to create a reference to a defined schema.
+type Ref string
+
+func (r Ref) toSwaggerSchema() json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{"$ref":"#/components/schemas/%s"}`, r))
+}
+
+func (r Ref) toJSONSchema(schemasDir string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{"$ref":"file://%s/%s.json"}`, schemasDir, r))
+}
+
+type typedParameter struct {
+	kind reflect.Kind
+	oasm.Parameter
+}
 
 type Data struct {
 	// The HTTP Request that called this endpoint.
@@ -16,11 +32,11 @@ type Data struct {
 	//   return Response{Ignore:true}.
 	ResWriter http.ResponseWriter
 	// The query parameters passed in the url which are defined in the documentation for this endpoint.
-	Query map[string]string
+	Query map[string]interface{}
 	// The path parameters passed in the url which are defined in the documentation for this endpoint.
-	Params map[string]string
+	Params map[string]interface{}
 	// The headers passed in the request which are defined in the documentation for this endpoint.
-	Headers map[string]string
+	Headers map[string]interface{}
 	// The request body, marshaled into the type of object which was set up on this endpoint during initialization.
 	Body interface{}
 	// The endpoint which was called.
@@ -39,48 +55,4 @@ type Response struct {
 	Body interface{}
 	// The headers to send back in the response.
 	Headers map[string]string
-}
-
-type ValidationError struct {
-	errors []string
-}
-
-func (v *ValidationError) Add(str string) {
-	if v.errors == nil {
-		v.errors = make([]string, 1, 5)
-		v.errors[0] = str
-	} else {
-		v.errors = append(v.errors, str)
-	}
-}
-
-func (v ValidationError) HasErrors() bool {
-	return v.errors != nil
-}
-
-func (v ValidationError) Error() string {
-	return "a validation error has occurred:\n  " + strings.Join(v.errors, "\n  ")
-}
-
-// A reference object
-func Ref(to string) json.RawMessage {
-	return []byte(fmt.Sprintf(`{"$ref":%s}`, strconv.Quote(to)))
-}
-
-// A reference to a schema in this document
-func SchemaRef(to string) json.RawMessage {
-	return Ref(fmt.Sprintf("#/components/schemas/%s", to))
-}
-
-func ArrayOfSchemaRef(to string) json.RawMessage {
-	return []byte(fmt.Sprintf(`{"type":"array","items":%s}`, SchemaRef(to)))
-}
-
-// A reference to any component in this document
-func CompRef(to string) json.RawMessage {
-	return Ref(fmt.Sprintf("#/components/%s", to))
-}
-
-func errorToJSON(err error) json.RawMessage {
-	return []byte(fmt.Sprintf(`{"message":"Internal Server Error","details":%s}`, strconv.Quote(err.Error())))
 }

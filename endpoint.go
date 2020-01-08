@@ -3,13 +3,16 @@ package oas
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pkg/errors"
 	"github.com/tjbrockmeyer/oasm"
+	"github.com/xeipuuv/gojsonschema"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"reflect"
 	"regexp"
 	"runtime/debug"
+	"strconv"
 	"strings"
 )
 
@@ -34,9 +37,12 @@ type Endpoint struct {
 	parsedPath       map[string]int
 
 	bodyType reflect.Type
-	query    []oasm.Parameter
-	params   map[int]oasm.Parameter
-	headers  []oasm.Parameter
+	query    []typedParameter
+	params   map[int]typedParameter
+	headers  []typedParameter
+
+	dataSchema      *gojsonschema.Schema
+	responseSchemas map[int]*gojsonschema.Schema
 }
 
 // Create a new endpoint for your API, supplying the mandatory arguments as necessary.
@@ -61,13 +67,16 @@ func NewEndpoint(operationId, method, path, summary, description string, tags []
 			},
 			Security: make([]oasm.SecurityRequirement, 0, 1),
 		},
-		Options:    make(map[string]interface{}, 3),
-		path:       path,
-		method:     strings.ToLower(method),
-		parsedPath: parsedPath,
-		query:      make([]oasm.Parameter, 0, 3),
-		params:     make(map[int]oasm.Parameter, 3),
-		headers:    make([]oasm.Parameter, 0, 3),
+		Options:         make(map[string]interface{}, 3),
+		path:            path,
+		method:          strings.ToLower(method),
+		parsedPath:      parsedPath,
+		bodyType:        nil,
+		query:           make([]typedParameter, 0, 3),
+		params:          make(map[int]typedParameter, 3),
+		headers:         make([]typedParameter, 0, 3),
+		dataSchema:      nil,
+		responseSchemas: make(map[int]*gojsonschema.Schema),
 	}
 }
 
@@ -110,7 +119,8 @@ func (e *Endpoint) Version(version int) *Endpoint {
 }
 
 // Attach a parameter doc.
-func (e *Endpoint) Parameter(in, name, description string, required bool, schema interface{}) *Endpoint {
+// Valid 'kind's are String, Int, Float64, and Bool
+func (e *Endpoint) Parameter(in, name, description string, required bool, schema interface{}, kind reflect.Kind) *Endpoint {
 	param := oasm.Parameter{
 		Name:        name,
 		Description: description,
@@ -118,25 +128,24 @@ func (e *Endpoint) Parameter(in, name, description string, required bool, schema
 		Required:    required,
 		Schema:      schema,
 	}
+	if kind != reflect.String && kind != reflect.Int && kind != reflect.Float64 && kind != reflect.Bool {
+		e.printError(errors.New("kind should be one of String, Int, Float64, Bool"),
+			"invalid kind for parameter %s in %s", name, in)
+	}
+	t := typedParameter{kind, param}
 	e.Doc.Parameters = append(e.Doc.Parameters, param)
 	switch in {
-	case "query":
-		e.query = append(e.query, param)
-	case "path":
+	case oasm.InQuery:
+		e.query = append(e.query, t)
+	case oasm.InPath:
 		loc, ok := e.parsedPath[name]
 		if !ok {
-			log.Printf("ERROR: path parameter %s provided in %s %s docs, but not provided in route",
-				name, e.path, e.path)
+			e.printError(errors.New("path parameter provided in docs, but not provided in route"), "")
 		} else {
-			e.params[loc] = param
+			e.params[loc] = t
 		}
-	case "header":
-		if e.headers == nil {
-			e.headers = make([]oasm.Parameter, 1, 3)
-			e.headers[0] = param
-		} else {
-			e.headers = append(e.headers, param)
-		}
+	case oasm.InHeader:
+		e.headers = append(e.headers, t)
 	}
 	return e
 }
@@ -203,9 +212,9 @@ func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
 	data := Data{
 		Req:       r,
 		ResWriter: w,
-		Query:     make(map[string]string, len(e.query)),
-		Params:    make(map[string]string, len(e.params)),
-		Headers:   make(map[string]string, len(e.headers)),
+		Query:     make(map[string]interface{}, len(e.query)),
+		Params:    make(map[string]interface{}, len(e.params)),
+		Headers:   make(map[string]interface{}, len(e.headers)),
 		Endpoint:  e,
 		Extra:     make(map[string]interface{}),
 	}
@@ -217,9 +226,21 @@ func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		res = Response{
-			Body:   errorToJSON(err),
-			Status: 500,
+		if valErr, ok := err.(JSONValidationError); ok {
+			res = Response{
+				Body:   valErr,
+				Status: 400,
+			}
+		} else if err == malformedJSONError {
+			res = Response{
+				Body:   malformedJSONError.Error(),
+				Status: 400,
+			}
+		} else {
+			res = Response{
+				Body:   errorToJSON(err),
+				Status: 500,
+			}
 		}
 	} else if res.Ignore {
 		return
@@ -230,6 +251,16 @@ func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
 	if e.spec != nil && e.spec.responseHandler != nil {
 		e.spec.responseHandler(data, res, err)
 	}
+
+	if schema, ok := e.responseSchemas[res.Status]; ok {
+		result, err := schema.Validate(gojsonschema.NewGoLoader(res.Body))
+		if err != nil {
+			e.printError(err, "response body contains malformed json")
+		} else if !result.Valid() {
+			e.printError(NewJSONValidationError(result), "response body failed validation for status %v", res.Status)
+		}
+	}
+
 	if res.Body == nil {
 		w.WriteHeader(res.Status)
 		return
@@ -243,22 +274,37 @@ func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
 		b, err = json.Marshal(res.Body)
 	}
 	if err != nil {
-		log.Printf("endpoint error (%s %s) at marshal body: %s\n\tobject: %v",
-			e.method, e.method, err, res.Body)
+		e.printError(err, "failed to marshal body (%s)", res.Body)
 		res.Status = 500
 		b = errorToJSON(err)
 	}
 
 	w.WriteHeader(res.Status)
 	if _, err = w.Write(b); err != nil {
-		log.Printf("endpoint error (%s %s) at write response: %s", e.method, e.path, err)
+		e.printError(err, "error occurred while writing the response body")
 	}
 }
 
 func (e *Endpoint) parseRequest(data *Data) error {
 	var err error
+	var requestBody []byte
+
+	convertParamType := func(param typedParameter, item string) (interface{}, error) {
+		switch param.kind {
+		case reflect.String:
+			return item, nil
+		case reflect.Int:
+			return strconv.Atoi(item)
+		case reflect.Float64:
+			return strconv.ParseFloat(item, 64)
+		case reflect.Bool:
+			return strconv.ParseBool(item)
+		default:
+			return nil, errors.New("bad reflection type for converting parameter from string")
+		}
+	}
+
 	if e.bodyType != nil {
-		var requestBody []byte
 		requestBody, err = ioutil.ReadAll(data.Req.Body)
 		if err != nil {
 			return fmt.Errorf("failed to read request body: %v", err)
@@ -267,18 +313,20 @@ func (e *Endpoint) parseRequest(data *Data) error {
 		if err != nil {
 			return fmt.Errorf("failed to close request body: %v", err)
 		}
-		data.Body = reflect.New(e.bodyType).Interface()
-		err = json.Unmarshal(requestBody, data.Body)
-		if err != nil {
-			return fmt.Errorf("failed to unmarshal request body: %v", err)
-		}
 	}
 
 	if len(e.query) > 0 {
 		getQueryParam := data.Req.URL.Query().Get
 		for _, param := range e.query {
 			name := param.Name
-			data.Query[name] = getQueryParam(name)
+			query := getQueryParam(name)
+			if query == "" {
+				continue
+			}
+			data.Query[name], err = convertParamType(param, query)
+			if err != nil {
+				return errors.WithMessage(err, "failed to convert query parameter "+name)
+			}
 		}
 	}
 
@@ -295,17 +343,56 @@ func (e *Endpoint) parseRequest(data *Data) error {
 			if len(splitPath) <= loc {
 				continue
 			}
-			data.Params[param.Name] = splitPath[basePathLength+loc]
+			data.Params[param.Name], err = convertParamType(param, splitPath[basePathLength+loc])
+			if err != nil {
+				return errors.WithMessage(err, "failed to convert path parameter "+param.Name)
+			}
 		}
 	}
 
 	if len(e.headers) > 0 {
-		setHeader := data.Req.Header.Get
+		getHeader := data.Req.Header.Get
 		for _, param := range e.headers {
 			name := param.Name
-			data.Headers[name] = setHeader(name)
+			header := getHeader(name)
+			if header == "" {
+				continue
+			}
+			data.Headers[name], err = convertParamType(param, header)
+			if err != nil {
+				return errors.WithMessage(err, "failed to conver header parameter "+name)
+			}
 		}
 	}
+
+	if e.dataSchema != nil {
+		dataJson := map[string]interface{}{
+			"Query":   data.Query,
+			"Params":  data.Params,
+			"Headers": data.Headers,
+		}
+		if e.bodyType != nil {
+			dataJson["Body"] = json.RawMessage(requestBody)
+		}
+		loader := gojsonschema.NewGoLoader(dataJson)
+		result, err := e.dataSchema.Validate(loader)
+		if err != nil {
+			return malformedJSONError
+		}
+		if !result.Valid() {
+			return NewJSONValidationError(result)
+		}
+		log.Println(result, err)
+	}
+
+	if e.bodyType != nil {
+		data.Body = reflect.New(e.bodyType).Interface()
+		err = json.Unmarshal(requestBody, data.Body)
+		if err != nil {
+			return malformedJSONError
+		}
+	}
+
 	return nil
 }
 
@@ -325,4 +412,8 @@ func (e *Endpoint) runUserDefinedFunc(data Data) (res Response, err error) {
 		return e.UserDefinedFunc(data)
 	}
 	return e.fullyWrappedFunc(data)
+}
+
+func (e *Endpoint) printError(err error, format string, args ...interface{}) {
+	log.Printf("endpoint error (%s): %s: %s", e.Doc.OperationId, fmt.Sprintf(format, args...), err.Error())
 }

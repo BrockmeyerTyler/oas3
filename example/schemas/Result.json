@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["title", "description", "url"],
+  "properties": {
+    "title": {"type": "string"},
+    "description": {"type": "string"},
+    "url": {"type": "string"}
+  }
+}
