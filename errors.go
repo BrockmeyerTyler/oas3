@@ -3,15 +3,20 @@ package oas
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pkg/errors"
 	"github.com/xeipuuv/gojsonschema"
 	"strconv"
 	"strings"
 )
 
-var (
-	malformedJSONError = errors.New("request contains malformed JSON")
-)
+func NewMalformedJSONError(err error) MalformedJSONError {
+	return MalformedJSONError(fmt.Sprint("request contains malformed JSON: ", err.Error()))
+}
+
+type MalformedJSONError string
+
+func (err MalformedJSONError) Error() string {
+	return string(err)
+}
 
 func NewJSONValidationError(result *gojsonschema.Result) JSONValidationError {
 	errorList := make([]string, 0, len(result.Errors()))

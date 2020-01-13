@@ -8,7 +8,6 @@ import (
 	"github.com/tjbrockmeyer/oasm"
 	"github.com/xeipuuv/gojsonschema"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -99,7 +98,6 @@ func NewOpenAPI(
 	if parsedUrl, err := url.Parse(serverUrl); err != nil {
 		return nil, nil, err
 	} else {
-		log.Println(parsedUrl.Path)
 		for _, s := range strings.Split(parsedUrl.Path, "/") {
 			if len(s) > 0 {
 				spec.basePathLength += 1
@@ -241,7 +239,6 @@ func NewOpenAPI(
 
 			e.responseSchemas[code], err = gojsonschema.NewSchema(gojsonschema.NewGoLoader(jsonSchemaLoader))
 			if err != nil {
-				log.Println(string(jsonSchemaLoader.(json.RawMessage)))
 				return nil, nil, errors.WithMessagef(
 					err, "failed to load response schema: (%s, %v)", e.Doc.OperationId, code)
 			}

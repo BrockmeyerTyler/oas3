@@ -223,9 +223,9 @@ func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
 				Body:   valErr,
 				Status: 400,
 			}
-		} else if err == malformedJSONError {
+		} else if malErr, ok := err.(MalformedJSONError); ok {
 			res = Response{
-				Body:   malformedJSONError.Error(),
+				Body:   malErr,
 				Status: 400,
 			}
 		} else {
@@ -299,11 +299,11 @@ func (e *Endpoint) parseRequest(data *Data) error {
 	if e.bodyType != nil {
 		requestBody, err = ioutil.ReadAll(data.Req.Body)
 		if err != nil {
-			return fmt.Errorf("failed to read request body: %v", err)
+			return errors.WithMessage(err, "failed to read request body")
 		}
 		err = data.Req.Body.Close()
 		if err != nil {
-			return fmt.Errorf("failed to close request body: %v", err)
+			return errors.WithMessage(err, "failed to close request body")
 		}
 	}
 
@@ -352,7 +352,7 @@ func (e *Endpoint) parseRequest(data *Data) error {
 			}
 			data.Headers[name], err = convertParamType(param, header)
 			if err != nil {
-				return errors.WithMessage(err, "failed to conver header parameter "+name)
+				return errors.WithMessage(err, "failed to convert header parameter "+name)
 			}
 		}
 	}
@@ -369,19 +369,18 @@ func (e *Endpoint) parseRequest(data *Data) error {
 		loader := gojsonschema.NewGoLoader(dataJson)
 		result, err := e.dataSchema.Validate(loader)
 		if err != nil {
-			return malformedJSONError
+			return NewMalformedJSONError(err)
 		}
 		if !result.Valid() {
 			return NewJSONValidationError(result)
 		}
-		log.Println(result, err)
 	}
 
 	if e.bodyType != nil {
 		data.Body = reflect.New(e.bodyType).Interface()
 		err = json.Unmarshal(requestBody, data.Body)
 		if err != nil {
-			return malformedJSONError
+			return NewMalformedJSONError(err)
 		}
 	}
 
@@ -398,7 +397,7 @@ func (e *Endpoint) runUserDefinedFunc(data Data) (res Response, err error) {
 		}
 	}()
 	if e.UserDefinedFunc == nil {
-		return res, fmt.Errorf("endpoint function is not defined")
+		return res, errors.New("endpoint function is not defined")
 	}
 	if e.spec == nil {
 		return e.UserDefinedFunc(data)
