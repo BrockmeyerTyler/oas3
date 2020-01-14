@@ -67,10 +67,8 @@ func TestNewEndpoint(t *testing.T) {
 
 func newEndpoint() *Endpoint {
 	return NewEndpoint("abc", "GET", "/abc", "summary", "description", []string{"TAG1"}).
-		Func(func(data Data) (response Response, e error) {
-			return Response{
-				Status: 200,
-			}, nil
+		Func(func(data Data) (response interface{}, e error) {
+			return nil, nil
 		})
 }
 
@@ -89,7 +87,7 @@ func TestEndpoint_Deprecate(t *testing.T) {
 func TestEndpoint_Func(t *testing.T) {
 	var funcRan bool
 	e := newEndpoint()
-	e.Func(func(d Data) (Response, error) {
+	e.Func(func(d Data) (interface{}, error) {
 		funcRan = true
 		return Response{}, nil
 	})
@@ -206,7 +204,7 @@ func TestEndpoint_RequestBody(t *testing.T) {
 	val := "this is an ABC"
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/abc", strings.NewReader(fmt.Sprintf(`{"abc":"%s"}`, val)))
-	e.Func(func(d Data) (Response, error) {
+	e.Func(func(d Data) (interface{}, error) {
 		abc := d.Body.(*Body).Abc
 		if abc != val {
 			t.Errorf("Expected body to have been unmarshaled. Expected Abc=%s, Got Abc=%s", val, abc)
@@ -245,7 +243,7 @@ func TestEndpoint_Run(t *testing.T) {
 	e := newEndpoint()
 
 	w := httptest.NewRecorder()
-	e.Func(func(d Data) (Response, error) {
+	e.Func(func(d Data) (interface{}, error) {
 		funcRan = true
 		return Response{}, nil
 	})
@@ -259,7 +257,7 @@ func TestEndpoint_Run(t *testing.T) {
 
 	body := `{"message":"Bad Request"}`
 	w = httptest.NewRecorder()
-	e.Func(func(d Data) (Response, error) {
+	e.Func(func(d Data) (interface{}, error) {
 		return Response{Status: 400, Body: json.RawMessage(body)}, nil
 	})
 	e.Call(w, r)
@@ -272,7 +270,7 @@ func TestEndpoint_Run(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	e.Func(func(d Data) (Response, error) {
+	e.Func(func(d Data) (interface{}, error) {
 		return Response{}, fmt.Errorf(`this is a test "error"`)
 	})
 	e.Call(w, r)
@@ -286,8 +284,8 @@ func TestEndpoint_Run(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	e.Func(func(d Data) (Response, error) {
-		return Response{Body: json.RawMessage(`{"message":"bad json"`)}, nil
+	e.Func(func(d Data) (interface{}, error) {
+		return json.RawMessage(`{"message":"bad json"`), nil
 	})
 	e.Call(w, r)
 	if w.Code != 500 {
@@ -295,7 +293,7 @@ func TestEndpoint_Run(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	e.Func(func(d Data) (Response, error) {
+	e.Func(func(d Data) (interface{}, error) {
 		panic("test error")
 	})
 	e.Call(w, r)
@@ -304,7 +302,7 @@ func TestEndpoint_Run(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	e.Func(func(d Data) (Response, error) {
+	e.Func(func(d Data) (interface{}, error) {
 		d.ResWriter.WriteHeader(204)
 		return Response{Ignore: true}, nil
 	})
@@ -321,7 +319,7 @@ func TestEndpoint_Run(t *testing.T) {
 		Parameter(oasm.InPath, "id", "The ABC's ID.", true, stringSchema, reflect.String).
 		Parameter(oasm.InQuery, "kind", "The ABC's kind", true, stringSchema, reflect.String).
 		Parameter(oasm.InHeader, "x-info", "The ABC's info", true, stringSchema, reflect.String).
-		Func(func(d Data) (Response, error) {
+		Func(func(d Data) (interface{}, error) {
 			if len(d.Query) != 1 || d.Query["kind"] != "abc Kind" {
 				t.Errorf("Expected Data.Query to have len()=1 and id=abc Kind. Got %v", d.Query)
 			}
@@ -341,7 +339,7 @@ func TestEndpoint_Run(t *testing.T) {
 func newApi(
 	endpoints []*Endpoint,
 	routeCreator func(method, path string, handler http.Handler),
-	middleware []Middleware, responseHandler ResErrHandler,
+	middleware []Middleware,
 ) (*OpenAPI, http.Handler, error) {
 	if endpoints == nil {
 		endpoints = []*Endpoint{newEndpoint()}
@@ -357,7 +355,7 @@ func newApi(
 	return NewOpenAPI(
 		"title", "description", "http://localhost", "1.0.0", "./test/public", "./example/schemas",
 		[]oasm.Tag{{Name: "Tag1", Description: "The first tag"}},
-		endpoints, routeCreator, middleware, responseHandler)
+		endpoints, routeCreator, middleware)
 }
 
 func cleanupApi(o *OpenAPI) {
@@ -386,27 +384,27 @@ func TestNewOpenAPI(t *testing.T) {
 			}
 		}, []Middleware{
 			func(next HandlerFunc) HandlerFunc {
-				return func(data Data) (response Response, e error) {
+				return func(data Data) (response interface{}, e error) {
 					middlewareRan = true
 					return next(data)
 				}
 			},
 			func(next HandlerFunc) HandlerFunc {
-				return func(data Data) (response Response, e error) {
+				return func(data Data) (response interface{}, e error) {
 					if !middlewareRan {
 						t.Errorf("Expected this middleware to have been run second, not first")
 					}
 					return next(data)
 				}
 			},
-		}, func(data Data, response Response, e error) Response {
-			responseHandlerRan = true
-			return response
 		})
 	defer cleanupApi(o)
 	if err != nil {
 		t.Error(err)
 		return
+	}
+	o.ResponseAndErrorHandler = func(data Data, response Response, e error) {
+		responseHandlerRan = true
 	}
 	if o.dir != dir {
 		t.Errorf("Expected API dir (%s) to be equal to %s", o.dir, dir)
@@ -477,7 +475,7 @@ func TestNewOpenAPI(t *testing.T) {
 }
 
 func TestOpenAPI_Save(t *testing.T) {
-	o, _, _ := newApi(nil, nil, nil, nil)
+	o, _, _ := newApi(nil, nil, nil)
 	defer cleanupApi(o)
 
 	if err := o.Save(); err != nil {

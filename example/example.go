@@ -73,12 +73,13 @@ func main() {
 					return next(data)
 				}
 			},
-		}, func(data oas.Data, response oas.Response, e error) {
-			method, path, version := data.Endpoint.Settings()
-			log.Println(method, path, version, "| response:", response.Status)
 		})
 	if err != nil {
 		panic(err)
+	}
+	spec.ResponseAndErrorHandler = func(data oas.Data, response oas.Response, e error) {
+		method, path, version := data.Endpoint.Settings()
+		log.Println(method, path, version, "| response:", response.Status)
 	}
 
 	// Mount the file server at the desired URL.

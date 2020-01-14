@@ -24,15 +24,14 @@ var swaggerUrlRegex = regexp.MustCompile(`url: ?(".*?"|'.*?')`)
 
 type HandlerFunc func(Data) (interface{}, error)
 type Middleware func(next HandlerFunc) HandlerFunc
-type ResErrHandler func(Data, Response, error)
 
 type OpenAPI struct {
 	Doc oasm.OpenAPIDoc
 	// Indent level of JSON responses. (Default: 2) A level of 0 will print condensed JSON.
-	JSONIndent      int
-	responseHandler ResErrHandler
-	dir             string
-	basePathLength  int
+	JSONIndent              int
+	ResponseAndErrorHandler func(Data, Response, error)
+	dir                     string
+	basePathLength          int
 }
 
 // Create a new OpenAPI Specification with JSON Schemas and a Swagger UI.
@@ -69,7 +68,7 @@ type OpenAPI struct {
 func NewOpenAPI(
 	title, description, serverUrl, version, dir, schemasDir string,
 	tags []oasm.Tag, endpoints []*Endpoint, routeCreator func(method, path string, handler http.Handler),
-	middleware []Middleware, responseHandler ResErrHandler,
+	middleware []Middleware,
 ) (spec *OpenAPI, fileServer http.Handler, err error) {
 	spec = &OpenAPI{
 		Doc: oasm.OpenAPIDoc{
@@ -87,9 +86,8 @@ func NewOpenAPI(
 			Paths:      make(oasm.PathsMap),
 			Components: oasm.Components{},
 		},
-		JSONIndent:      2,
-		responseHandler: responseHandler,
-		dir:             dir,
+		JSONIndent: 2,
+		dir:        dir,
 	}
 	if err := os.MkdirAll(dir, os.ModePerm); err != nil && !os.IsExist(err) {
 		return nil, nil, err

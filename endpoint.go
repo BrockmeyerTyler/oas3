@@ -257,38 +257,39 @@ func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			errs = append(errs, errors.WithMessage(err, "response body contains malformed json").Error())
 		} else if !result.Valid() {
-			errs = append(errs, errors.WithMessagef(NewJSONValidationError(result), "response body failed validation for status %v", res.Status).Error())
+			errs = append(errs, errors.WithMessagef(
+				NewJSONValidationError(result),
+				"response body failed validation for status %v", res.Status).Error())
 		}
 	}
 
 	if res.Body == nil {
 		w.WriteHeader(res.Status)
-		return
-	}
-
-	var b []byte
-
-	if e.spec != nil && e.spec.JSONIndent > 0 {
-		b, err = json.MarshalIndent(res.Body, "", strings.Repeat(" ", e.spec.JSONIndent))
 	} else {
-		b, err = json.Marshal(res.Body)
-	}
-	if err != nil {
-		errs = append(errs, errors.WithMessagef(err, "failed to marshal body (%v)", res.Body).Error())
-		res.Status = 500
-		b = errorToJSON(err)
-	}
+		var b []byte
 
-	w.WriteHeader(res.Status)
-	if _, err = w.Write(b); err != nil {
-		errs = append(errs, errors.WithMessage(err, "error occurred while writing the response body").Error())
+		if e.spec != nil && e.spec.JSONIndent > 0 {
+			b, err = json.MarshalIndent(res.Body, "", strings.Repeat(" ", e.spec.JSONIndent))
+		} else {
+			b, err = json.Marshal(res.Body)
+		}
+		if err != nil {
+			errs = append(errs, errors.WithMessagef(err, "failed to marshal body (%v)", res.Body).Error())
+			res.Status = 500
+			b = errorToJSON(err)
+		}
+
+		w.WriteHeader(res.Status)
+		if _, err = w.Write(b); err != nil {
+			errs = append(errs, errors.WithMessage(err, "error occurred while writing the response body").Error())
+		}
 	}
 
 	if len(errs) > 0 {
 		err = errors.New(strings.Join(errs, "\n  "))
 	}
-	if e.spec != nil && e.spec.responseHandler != nil {
-		e.spec.responseHandler(data, res, err)
+	if e.spec != nil && e.spec.ResponseAndErrorHandler != nil {
+		e.spec.ResponseAndErrorHandler(data, res, err)
 	} else {
 		e.printError(err)
 	}
@@ -423,5 +424,5 @@ func (e *Endpoint) runUserDefinedFunc(data Data) (res interface{}, err error) {
 }
 
 func (e *Endpoint) printError(err error) {
-	log.Printf("endpoint error (%s): %s\n", e.Doc.OperationId, err)
+	log.Printf("endpoint error (%s): %v\n", e.Doc.OperationId, err)
 }
