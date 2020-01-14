@@ -28,33 +28,25 @@ func main() {
 			Parameter("query", "skip", "How many results to skip over before returning", false, intSchema, reflect.Int).
 			Response(200, "Results were found", oas.Ref("SearchResults")).
 			Response(204, "No results found", nil).
-			Func(func(data oas.Data) (oas.Response, error) {
+			Func(func(data oas.Data) (interface{}, error) {
 				// Your search logic here...
-				return oas.Response{
-					Status: 204,
-				}, nil
+				return oas.Response{Status: 204}, nil
 			}),
 		oas.NewEndpoint("getItem", "GET", "/item/{item}", "Get an Item", "Like, really get an Item if you want it", []string{"Tag1"}).
 			Version(2).
 			Parameter("path", "item", "the item to get", true, strSchema, reflect.String).
 			Response(200, "Results were found", oas.Ref("SearchResults")).
 			Response(204, "Item does not exist", nil).
-			Func(func(data oas.Data) (oas.Response, error) {
-				return oas.Response{
-					Status: 200,
-					Body:   json.RawMessage(fmt.Sprintf(`"searched item: '%s'"`, data.Params["item"])),
-				}, nil
+			Func(func(data oas.Data) (interface{}, error) {
+				return json.RawMessage(fmt.Sprintf(`"got item: '%s'"`, data.Params["item"])), nil
 			}),
 		oas.NewEndpoint("putItem", "PUT", "/item/{item}", "Put an Item", "Like, really put an Item if you want to", []string{"Tag2"}).
 			Version(1).
 			Parameter("path", "item", "the item to put", true, strSchema, reflect.String).
 			RequestBody("Item details", true, oas.Ref("Result"), Result{}).
 			Response(201, "Created/Updated", nil).
-			Func(func(data oas.Data) (oas.Response, error) {
-				return oas.Response{
-					Status: 201,
-					Body:   json.RawMessage(fmt.Sprintf(`"searched item: '%s'"`, data.Params["item"])),
-				}, nil
+			Func(func(data oas.Data) (interface{}, error) {
+				return json.RawMessage(fmt.Sprintf(`"put item: '%s'"`, data.Params["item"])), nil
 			}),
 	}
 
@@ -70,21 +62,20 @@ func main() {
 			endpointRouter.Path(path).Methods(method).Handler(handler)
 		}, []oas.Middleware{
 			func(next oas.HandlerFunc) oas.HandlerFunc {
-				return func(data oas.Data) (response oas.Response, e error) {
+				return func(data oas.Data) (response interface{}, e error) {
 					log.Println("This runs first")
 					return next(data)
 				}
 			},
 			func(next oas.HandlerFunc) oas.HandlerFunc {
-				return func(data oas.Data) (response oas.Response, e error) {
+				return func(data oas.Data) (response interface{}, e error) {
 					log.Println("This runs second")
 					return next(data)
 				}
 			},
-		}, func(data oas.Data, response oas.Response, e error) oas.Response {
+		}, func(data oas.Data, response oas.Response, e error) {
 			method, path, version := data.Endpoint.Settings()
 			log.Println(method, path, version, "| response:", response.Status)
-			return response
 		})
 	if err != nil {
 		panic(err)

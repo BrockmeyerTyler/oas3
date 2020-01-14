@@ -59,7 +59,7 @@ func NewEndpoint(operationId, method, path, summary, description string, tags []
 		Doc: oasm.Operation{
 			Tags:        tags,
 			Summary:     summary,
-			Description: description,
+			Description: strings.ReplaceAll(description, "\n", "<br/>"),
 			OperationId: operationId,
 			Parameters:  make([]oasm.Parameter, 0, 2),
 			Responses: oasm.Responses{
@@ -129,8 +129,9 @@ func (e *Endpoint) Parameter(in, name, description string, required bool, schema
 		Schema:      schema,
 	}
 	if kind != reflect.String && kind != reflect.Int && kind != reflect.Float64 && kind != reflect.Bool {
-		e.printError(errors.New("kind should be one of String, Int, Float64, Bool"),
-			"invalid kind for parameter %s in %s", name, in)
+		e.printError(errors.New(
+			fmt.Sprintf("invalid kind for parameter %s in %s: ", name, in) +
+				"kind should be one of String, Int, Float64, Bool"))
 	}
 	t := typedParameter{kind, param}
 	e.Doc.Parameters = append(e.Doc.Parameters, param)
@@ -140,7 +141,7 @@ func (e *Endpoint) Parameter(in, name, description string, required bool, schema
 	case oasm.InPath:
 		loc, ok := e.parsedPath[name]
 		if !ok {
-			e.printError(errors.New("path parameter provided in docs, but not provided in route"), "")
+			e.printError(errors.New("path parameter provided in docs, but not provided in route"))
 		} else {
 			e.params[loc] = t
 		}
@@ -209,12 +210,16 @@ func (e *Endpoint) Func(f HandlerFunc) *Endpoint {
 // Call this endpoint manually
 // `Call` should only be used for testing purposes mostly.
 func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
-	data := NewData(w, r, e)
-	var res Response
+	var (
+		errs   = make([]string, 0, 4)
+		data   = NewData(w, r, e)
+		output interface{}
+		res    Response
+	)
 
 	err := e.parseRequest(&data)
 	if err == nil {
-		res, err = e.runUserDefinedFunc(data)
+		output, err = e.runUserDefinedFunc(data)
 	}
 
 	if err != nil {
@@ -234,22 +239,25 @@ func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
 				Status: 500,
 			}
 		}
-	} else if res.Ignore {
-		return
-	} else if res.Status == 0 {
-		res.Status = 200
+	} else if response, ok := output.(Response); ok {
+		if response.Ignore {
+			return
+		}
+		res = response
+	} else {
+		res.Body = output
 	}
 
-	if e.spec != nil && e.spec.responseHandler != nil {
-		e.spec.responseHandler(data, res, err)
+	if res.Status == 0 {
+		res.Status = 200
 	}
 
 	if schema, ok := e.responseSchemas[res.Status]; ok {
 		result, err := schema.Validate(gojsonschema.NewGoLoader(res.Body))
 		if err != nil {
-			e.printError(err, "response body contains malformed json")
+			errs = append(errs, errors.WithMessage(err, "response body contains malformed json").Error())
 		} else if !result.Valid() {
-			e.printError(NewJSONValidationError(result), "response body failed validation for status %v", res.Status)
+			errs = append(errs, errors.WithMessagef(NewJSONValidationError(result), "response body failed validation for status %v", res.Status).Error())
 		}
 	}
 
@@ -266,14 +274,23 @@ func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
 		b, err = json.Marshal(res.Body)
 	}
 	if err != nil {
-		e.printError(err, "failed to marshal body (%s)", res.Body)
+		errs = append(errs, errors.WithMessagef(err, "failed to marshal body (%v)", res.Body).Error())
 		res.Status = 500
 		b = errorToJSON(err)
 	}
 
 	w.WriteHeader(res.Status)
 	if _, err = w.Write(b); err != nil {
-		e.printError(err, "error occurred while writing the response body")
+		errs = append(errs, errors.WithMessage(err, "error occurred while writing the response body").Error())
+	}
+
+	if len(errs) > 0 {
+		err = errors.New(strings.Join(errs, "\n  "))
+	}
+	if e.spec != nil && e.spec.responseHandler != nil {
+		e.spec.responseHandler(data, res, err)
+	} else {
+		e.printError(err)
 	}
 }
 
@@ -387,7 +404,7 @@ func (e *Endpoint) parseRequest(data *Data) error {
 	return nil
 }
 
-func (e *Endpoint) runUserDefinedFunc(data Data) (res Response, err error) {
+func (e *Endpoint) runUserDefinedFunc(data Data) (res interface{}, err error) {
 	defer func() {
 		panicErr := recover()
 		if panicErr != nil {
@@ -405,6 +422,6 @@ func (e *Endpoint) runUserDefinedFunc(data Data) (res Response, err error) {
 	return e.fullyWrappedFunc(data)
 }
 
-func (e *Endpoint) printError(err error, format string, args ...interface{}) {
-	log.Printf("endpoint error (%s): %s: %s", e.Doc.OperationId, fmt.Sprintf(format, args...), err.Error())
+func (e *Endpoint) printError(err error) {
+	log.Printf("endpoint error (%s): %s\n", e.Doc.OperationId, err)
 }

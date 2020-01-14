@@ -341,7 +341,7 @@ func TestEndpoint_Run(t *testing.T) {
 func newApi(
 	endpoints []*Endpoint,
 	routeCreator func(method, path string, handler http.Handler),
-	middleware []Middleware, responseHandler ResponseHandler,
+	middleware []Middleware, responseHandler ResErrHandler,
 ) (*OpenAPI, http.Handler, error) {
 	if endpoints == nil {
 		endpoints = []*Endpoint{newEndpoint()}

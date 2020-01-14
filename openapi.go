@@ -22,15 +22,15 @@ var specPath = "openapi.json"
 var refRegex = regexp.MustCompile(`"\$ref"\s*:\s*"file:/[^"]*/(.*?)\.json"`)
 var swaggerUrlRegex = regexp.MustCompile(`url: ?(".*?"|'.*?')`)
 
-type HandlerFunc func(Data) (Response, error)
+type HandlerFunc func(Data) (interface{}, error)
 type Middleware func(next HandlerFunc) HandlerFunc
-type ResponseHandler func(Data, Response, error) Response
+type ResErrHandler func(Data, Response, error)
 
 type OpenAPI struct {
 	Doc oasm.OpenAPIDoc
 	// Indent level of JSON responses. (Default: 2) A level of 0 will print condensed JSON.
 	JSONIndent      int
-	responseHandler ResponseHandler
+	responseHandler ResErrHandler
 	dir             string
 	basePathLength  int
 }
@@ -69,7 +69,7 @@ type OpenAPI struct {
 func NewOpenAPI(
 	title, description, serverUrl, version, dir, schemasDir string,
 	tags []oasm.Tag, endpoints []*Endpoint, routeCreator func(method, path string, handler http.Handler),
-	middleware []Middleware, responseHandler ResponseHandler,
+	middleware []Middleware, responseHandler ResErrHandler,
 ) (spec *OpenAPI, fileServer http.Handler, err error) {
 	spec = &OpenAPI{
 		Doc: oasm.OpenAPIDoc{
