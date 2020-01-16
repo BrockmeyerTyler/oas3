@@ -90,12 +90,14 @@ func (e *Endpoint) Settings() (method, path string, version int) {
 func (e *Endpoint) GetSecuritySchemes() map[*oasm.SecurityRequirement]oasm.SecurityScheme {
 	schemes := make(map[*oasm.SecurityRequirement]oasm.SecurityScheme)
 	if e.spec != nil && e.spec.Doc.Security != nil {
-		for _, requirement := range e.spec.Doc.Security {
-			schemes[&requirement] = e.spec.Doc.Components.SecuritySchemes[requirement.Name]
+		security := e.spec.Doc.Security
+		for i := range e.spec.Doc.Security {
+			schemes[&security[i]] = e.spec.Doc.Components.SecuritySchemes[security[i].Name]
 		}
 	}
-	for _, requirement := range e.Doc.Security {
-		schemes[&requirement] = e.spec.Doc.Components.SecuritySchemes[requirement.Name]
+	security := e.Doc.Security
+	for i := range e.Doc.Security {
+		schemes[&security[i]] = e.spec.Doc.Components.SecuritySchemes[security[i].Name]
 	}
 	return schemes
 }
