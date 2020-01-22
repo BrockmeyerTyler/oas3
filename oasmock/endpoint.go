@@ -67,10 +67,11 @@ func (e *endpoint) SecurityMapping() map[*oasm.SecurityRequirement]oasm.Security
 	return map[*oasm.SecurityRequirement]oasm.SecurityScheme{}
 }
 
-func (e *endpoint) UserDefinedFunc(oas.Data) (interface{}, error) {
+func (e *endpoint) UserDefinedFunc(data oas.Data) (interface{}, error) {
 	if e.function == nil {
 		return nil, errors.New("endpoint has not been Define()d: " + e.doc.OperationId)
 	}
+	return e.function(data)
 }
 
 func (e *endpoint) Call(w http.ResponseWriter, r *http.Request) {

@@ -35,6 +35,7 @@ type EndpointDeclaration interface {
 	Security(name string, scopes []string) EndpointDeclaration
 	// Attach a function to run when calling this endpoint.
 	// This should be the final function called when declaring an endpoint.
+	// This will also create a large amount of metadata to be used when parsing a request.
 	Define(f HandlerFunc) (Endpoint, error)
 	// See: Define(f HandlerFunc) (Endpoint, error)
 	// Panics if an error occurs.
