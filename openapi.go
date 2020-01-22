@@ -24,14 +24,37 @@ var swaggerUrlRegex = regexp.MustCompile(`url: ?(".*?"|'.*?')`)
 
 type HandlerFunc func(Data) (interface{}, error)
 type Middleware func(next HandlerFunc) HandlerFunc
+type RouteCreator func(method, path string, handler http.Handler)
+type ResponseAndErrorHandler func(Data, Response, error)
 
-type OpenAPI struct {
-	Doc oasm.OpenAPIDoc
-	// Indent level of JSON responses. (Default: 2) A level of 0 will print condensed JSON.
-	JSONIndent              int
-	ResponseAndErrorHandler func(Data, Response, error)
+type OpenAPI interface {
+	// Get the API documentation for reading or modification.
+	Doc() *oasm.OpenAPIDoc
+	// Function to handle responses and/or errors that come from an endpoint function call.
+	// The default implementation prints any errors to stdout.
+	SetResponseAndErrorHandler(ResponseAndErrorHandler)
+	// Set Indent level of JSON responses. (Default: 2) A level of 0 will print condensed JSON.
+	SetDefaultJSONIndent(int)
+	// Get Indent level of JSON responses. (Default: 2) A level of 0 will print condensed JSON.
+	DefaultJSONIndent() int
+	// Create a new endpoint for your API, complete with documentation.
+	NewEndpoint(operationId, method, path, summary, description string, tags []string) EndpointDeclaration
+	// Get all endpoints mapped by their operation ids.
+	Endpoints() map[string]Endpoint
+	// Save the spec into the directory
+	Save() error
+}
+
+type openAPI struct {
+	doc                     oasm.OpenAPIDoc
+	jsonIndent              int
+	responseAndErrorHandler ResponseAndErrorHandler
 	dir                     string
 	basePathLength          int
+	schemasDir              string
+	middleware              []Middleware
+	routeCreator            RouteCreator
+	endpoints               map[string]Endpoint
 }
 
 // Create a new OpenAPI Specification with JSON Schemas and a Swagger UI.
@@ -57,9 +80,6 @@ type OpenAPI struct {
 //   middleware      - A list of EndpointMiddleware functions to be run before each endpoint when they are called
 //                     * Useful for authorization, header pre-processing, and more.
 //                     * Use `nil` or an empty list to have no middleware.
-//   responseHandler - A function to read and/or modify the response after an endpoint call
-//                     * Useful for logging, metrics, notifications and more.
-//                     * Use `nil` to have no response handler.
 //
 // Returns:
 //   spec       - The specification object
@@ -67,11 +87,11 @@ type OpenAPI struct {
 //   err        - Any error that may have occurred
 func NewOpenAPI(
 	title, description, serverUrl, version, dir, schemasDir string,
-	tags []oasm.Tag, endpoints []*Endpoint, routeCreator func(method, path string, handler http.Handler),
+	tags []oasm.Tag, routeCreator RouteCreator,
 	middleware []Middleware,
-) (spec *OpenAPI, fileServer http.Handler, err error) {
-	spec = &OpenAPI{
-		Doc: oasm.OpenAPIDoc{
+) (spec OpenAPI, fileServer http.Handler, err error) {
+	o := &openAPI{
+		doc: oasm.OpenAPIDoc{
 			OpenApi: "3.0.0",
 			Info: &oasm.Info{
 				Title:       title,
@@ -86,8 +106,12 @@ func NewOpenAPI(
 			Paths:      make(oasm.PathsMap),
 			Components: oasm.Components{},
 		},
-		JSONIndent: 2,
-		dir:        dir,
+		jsonIndent:   2,
+		dir:          dir,
+		schemasDir:   schemasDir,
+		middleware:   middleware,
+		routeCreator: routeCreator,
+		endpoints:    make(map[string]Endpoint),
 	}
 	if err := os.MkdirAll(dir, os.ModePerm); err != nil && !os.IsExist(err) {
 		return nil, nil, err
@@ -98,13 +122,13 @@ func NewOpenAPI(
 	} else {
 		for _, s := range strings.Split(parsedUrl.Path, "/") {
 			if len(s) > 0 {
-				spec.basePathLength += 1
+				o.basePathLength += 1
 			}
 		}
 	}
 
-	if spec.Doc.Components.Schemas == nil {
-		spec.Doc.Components.Schemas = make(map[string]interface{})
+	if o.doc.Components.Schemas == nil {
+		o.doc.Components.Schemas = make(map[string]interface{})
 	}
 
 	// Gather all schemas, creating separate swagger schemas.
@@ -119,7 +143,7 @@ func NewOpenAPI(
 		typeName := name[:len(name)-5]
 		contents, err := ioutil.ReadFile(path)
 		swaggerSchemaContents := refRegex.ReplaceAll(contents, []byte(`"$$ref":"#/components/schemas/$1"`))
-		spec.Doc.Components.Schemas[typeName] = json.RawMessage(swaggerSchemaContents)
+		o.doc.Components.Schemas[typeName] = json.RawMessage(swaggerSchemaContents)
 		if err != nil {
 			return errors.WithMessage(err, "failed to parse json schema for "+typeName)
 		}
@@ -129,147 +153,15 @@ func NewOpenAPI(
 		return nil, nil, errors.WithMessage(err, "failed to read the schema directory")
 	}
 
-	for _, e := range endpoints {
-
-		// Create a schema for the data object.
-		querySchema := map[string]interface{}{
-			"type":       "object",
-			"required":   make([]string, 0, 3),
-			"properties": make(map[string]interface{}),
-		}
-		paramsSchema := map[string]interface{}{
-			"type":       "object",
-			"required":   make([]string, 0, 3),
-			"properties": make(map[string]interface{}),
-		}
-		headersSchema := map[string]interface{}{
-			"type":       "object",
-			"required":   make([]string, 0, 3),
-			"properties": make(map[string]interface{}),
-		}
-
-		dataSchema := map[string]interface{}{
-			"type": "object",
-			"required": []string{
-				"Query",
-				"Params",
-				"Headers",
-			},
-			"properties": map[string]interface{}{
-				"Query":   querySchema,
-				"Params":  paramsSchema,
-				"Headers": headersSchema,
-			},
-		}
-
-		// Create schema for request body.
-		if e.Doc.RequestBody != nil {
-			b := e.Doc.RequestBody
-			bodyContent := b.Content["application/json"]
-
-			// Resolve references
-			if ref, ok := bodyContent.Schema.(Ref); ok {
-				bodyContent.Schema = ref.toSwaggerSchema()
-				e.Doc.RequestBody.Content["application/json"] = bodyContent
-				dataSchema["properties"].(map[string]interface{})["Body"] = ref.toJSONSchema(schemasDir)
-			} else {
-				dataSchema["properties"].(map[string]interface{})["Body"] = bodyContent.Schema
-			}
-
-			// Set schema attributes.
-			if b.Required {
-				dataSchema["required"] = append(dataSchema["required"].([]string), "Body")
-			}
-		}
-
-		// Create schemas for parameters.
-		for i, p := range e.Doc.Parameters {
-			var addToSchema *map[string]interface{}
-			var jsonSchema interface{}
-
-			switch p.In {
-			case oasm.InQuery:
-				addToSchema = &querySchema
-			case oasm.InPath:
-				addToSchema = &paramsSchema
-			case oasm.InHeader:
-				addToSchema = &headersSchema
-			default:
-				return nil, nil, errors.New("invalid value for 'in' on parameter: " + p.Name)
-			}
-
-			// Resolve references.
-			if ref, ok := p.Schema.(Ref); ok {
-				e.Doc.Parameters[i].Schema = ref.toSwaggerSchema()
-				jsonSchema = ref.toJSONSchema(schemasDir)
-			} else {
-				jsonSchema = p.Schema
-			}
-
-			// Set schema attributes.
-			(*addToSchema)["properties"].(map[string]interface{})[p.Name] = jsonSchema
-			if p.Required {
-				(*addToSchema)["required"] = append((*addToSchema)["required"].([]string), p.Name)
-			}
-		}
-
-		// Save the schema to the endpoint.
-		e.dataSchema, err = gojsonschema.NewSchema(gojsonschema.NewGoLoader(dataSchema))
-		if err != nil {
-			return nil, nil, errors.WithMessage(err, "failed to load dataSchema for endpoint: "+e.Doc.OperationId)
-		}
-
-		// Create schemas for response codes
-		for code, response := range e.Doc.Responses.Codes {
-			var jsonSchemaLoader interface{}
-			responseContent := response.Content["application/json"]
-			if responseContent.Schema == nil {
-				continue
-			}
-			if ref, ok := responseContent.Schema.(Ref); ok {
-				responseContent.Schema = ref.toSwaggerSchema()
-				response.Content["application/json"] = responseContent
-				e.Doc.Responses.Codes[code] = response
-				jsonSchemaLoader = ref.toJSONSchema(schemasDir)
-			} else {
-				jsonSchemaLoader = responseContent.Schema
-			}
-
-			e.responseSchemas[code], err = gojsonschema.NewSchema(gojsonschema.NewGoLoader(jsonSchemaLoader))
-			if err != nil {
-				return nil, nil, errors.WithMessagef(
-					err, "failed to load response schema: (%s, %v)", e.Doc.OperationId, code)
-			}
-		}
-
-		// Create routes and docs for all endpoints
-		pathItem, ok := spec.Doc.Paths[e.path]
-		if !ok {
-			pathItem = oasm.PathItem{
-				Methods: make(map[string]oasm.Operation)}
-			spec.Doc.Paths[e.path] = pathItem
-		}
-		pathItem.Methods[e.method] = e.Doc
-		handler := e.UserDefinedFunc
-		if middleware != nil {
-			for i := len(middleware) - 1; i >= 0; i-- {
-				handler = middleware[i](handler)
-			}
-		}
-		routeCreator(e.method, e.path, http.HandlerFunc(e.Call))
-		e.fullyWrappedFunc = handler
-		e.spec = spec
-	}
-
 	// Create Swagger UI
 	_, filePath, _, ok := runtime.Caller(0)
 	if !ok {
 		return nil, nil, err
 	}
-	if err = copy2.Copy(path.Join(path.Dir(filePath), "swagger-dist"), spec.dir); err != nil {
+	if err = copy2.Copy(path.Join(path.Dir(filePath), "swagger-dist"), o.dir); err != nil {
 		return nil, nil, fmt.Errorf("failed to copy swagger ui distribution: %v", err)
 	}
-	indexHtml := fmt.Sprintf("%s/index.html", spec.dir)
+	indexHtml := fmt.Sprintf("%s/index.html", o.dir)
 	if contents, err := ioutil.ReadFile(indexHtml); err != nil {
 		return nil, nil, fmt.Errorf("could not open 'index.html' in swagger directory: %s", err.Error())
 	} else {
@@ -280,12 +172,68 @@ func NewOpenAPI(
 		}
 	}
 
-	return spec, http.FileServer(http.Dir(spec.dir)), nil
+	return o, http.FileServer(http.Dir(o.dir)), nil
 }
 
-// Save the spec into the directory
-func (o *OpenAPI) Save() error {
-	if b, err := json.Marshal(o.Doc); err != nil {
+func (o *openAPI) Doc() *oasm.OpenAPIDoc {
+	return &o.doc
+}
+
+func (o *openAPI) SetDefaultJSONIndent(i int) {
+	o.jsonIndent = i
+}
+
+func (o *openAPI) DefaultJSONIndent() int {
+	return o.jsonIndent
+}
+
+func (o *openAPI) SetResponseAndErrorHandler(reh ResponseAndErrorHandler) {
+	o.responseAndErrorHandler = reh
+}
+
+func (o *openAPI) NewEndpoint(operationId, method, path, summary, description string, tags []string) EndpointDeclaration {
+	parsedPath := make(map[string]int)
+	pathParamRegex := regexp.MustCompile(`{[^/]+}`)
+	splitPath := strings.Split(path, "/")
+	for i, s := range splitPath {
+		if pathParamRegex.MatchString(s) {
+			parsedPath[s[1:len(s)-1]] = i
+		}
+	}
+	e := &endpointObject{
+		doc: oasm.Operation{
+			Tags:        tags,
+			Summary:     summary,
+			Description: strings.ReplaceAll(description, "\n", "<br/>"),
+			OperationId: operationId,
+			Parameters:  make([]oasm.Parameter, 0, 2),
+			Responses: oasm.Responses{
+				Codes: make(map[int]oasm.Response),
+			},
+			Security: make([]oasm.SecurityRequirement, 0, 1),
+		},
+		options:         make(map[string]interface{}, 3),
+		path:            path,
+		method:          strings.ToLower(method),
+		parsedPath:      parsedPath,
+		bodyType:        nil,
+		query:           make([]typedParameter, 0, 3),
+		params:          make(map[int]typedParameter, 3),
+		headers:         make([]typedParameter, 0, 3),
+		dataSchema:      nil,
+		responseSchemas: make(map[int]*gojsonschema.Schema),
+		spec:            o,
+	}
+	o.endpoints[operationId] = e
+	return e
+}
+
+func (o *openAPI) Endpoints() map[string]Endpoint {
+	return o.endpoints
+}
+
+func (o *openAPI) Save() error {
+	if b, err := json.Marshal(o.doc); err != nil {
 		return fmt.Errorf("could not marshal Open API 3 spec: %s", err.Error())
 	} else if err = ioutil.WriteFile(path.Join(o.dir, specPath), b, 0644); err != nil {
 		return fmt.Errorf("could not write Open API 3 spec to %s: %s", o.dir, err.Error())

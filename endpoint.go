@@ -10,30 +10,63 @@ import (
 	"log"
 	"net/http"
 	"reflect"
-	"regexp"
 	"runtime/debug"
 	"strconv"
 	"strings"
 )
 
-type Endpoint struct {
-	// The operation documentation for this endpoint.
-	Doc oasm.Operation
+type EndpointDeclaration interface {
+	// Add some options to the endpoint.
+	// These can be processed by custom middleware via the Endpoint.Options map.
+	Option(string, interface{}) EndpointDeclaration
+	// Set the version of this endpoint, updating the path to correspond to it
+	Version(int) EndpointDeclaration
+	// Attach a parameter doc.
+	// Valid 'kind's are String, Int, Float64, and Bool
+	Parameter(in string, name string, description string, required bool, schema interface{}, kind reflect.Kind) EndpointDeclaration
+	// Attach a request body doc.
+	// `schema` will be used in the documentation, and `object` will be used for reading the body automatically.
+	RequestBody(description string, required bool, schema interface{}, object interface{}) EndpointDeclaration
+	// Attach a response doc. Schema may be nil.
+	Response(code int, description string, schema interface{}) EndpointDeclaration
+	// Deprecate this endpoint.
+	Deprecate(comment string) EndpointDeclaration
+	// Attach a security doc.
+	Security(name string, scopes []string) EndpointDeclaration
+	// Attach a function to run when calling this endpoint.
+	// This should be the final function called when declaring an endpoint.
+	Define(f HandlerFunc) (Endpoint, error)
+	// See: Define(f HandlerFunc) (Endpoint, error)
+	// Panics if an error occurs.
+	MustDefine(f HandlerFunc) Endpoint
+}
 
+type Endpoint interface {
+	// The operation documentation.
+	Doc() *oasm.Operation
 	// Options that can be read by middleware to add items to the request data before it gets to this endpoint.
-	Options map[string]interface{}
+	Options() map[string]interface{}
+	// Return the method, path, and version of this endpoint (documentation that is not contained in Doc())
+	Settings() (method, path string, version int)
+	// Return the security requirements mapped to their corresponding security schemes.
+	SecurityMapping() map[*oasm.SecurityRequirement]oasm.SecurityScheme
+	// The function that was defined by the user via Define()
+	UserDefinedFunc(Data) (interface{}, error)
+	// HTTP handler for the endpoint.
+	Call(w http.ResponseWriter, r *http.Request)
+}
 
-	// The function defined during endpoint creation via Endpoint.Func().
-	// During testing, it may be useful to call the function directly, or
-	// to override this value by wrapping with some testing middleware
-	UserDefinedFunc HandlerFunc
+type endpointObject struct {
+	doc     oasm.Operation
+	options map[string]interface{}
 
 	path    string
 	method  string
 	version int
 
+	userDefinedFunc  HandlerFunc
 	fullyWrappedFunc HandlerFunc
-	spec             *OpenAPI
+	spec             *openAPI
 	parsedPath       map[string]int
 
 	bodyType reflect.Type
@@ -45,84 +78,22 @@ type Endpoint struct {
 	responseSchemas map[int]*gojsonschema.Schema
 }
 
-// Create a new endpoint for your API, supplying the mandatory arguments as necessary.
-func NewEndpoint(operationId, method, path, summary, description string, tags []string) *Endpoint {
-	parsedPath := make(map[string]int)
-	pathParamRegex := regexp.MustCompile(`{[^/]+}`)
-	splitPath := strings.Split(path, "/")
-	for i, s := range splitPath {
-		if pathParamRegex.MatchString(s) {
-			parsedPath[s[1:len(s)-1]] = i
-		}
-	}
-	return &Endpoint{
-		Doc: oasm.Operation{
-			Tags:        tags,
-			Summary:     summary,
-			Description: strings.ReplaceAll(description, "\n", "<br/>"),
-			OperationId: operationId,
-			Parameters:  make([]oasm.Parameter, 0, 2),
-			Responses: oasm.Responses{
-				Codes: make(map[int]oasm.Response),
-			},
-			Security: make([]oasm.SecurityRequirement, 0, 1),
-		},
-		Options:         make(map[string]interface{}, 3),
-		path:            path,
-		method:          strings.ToLower(method),
-		parsedPath:      parsedPath,
-		bodyType:        nil,
-		query:           make([]typedParameter, 0, 3),
-		params:          make(map[int]typedParameter, 3),
-		headers:         make([]typedParameter, 0, 3),
-		dataSchema:      nil,
-		responseSchemas: make(map[int]*gojsonschema.Schema),
-	}
-}
-
-// Returns settings of the endpoint that are not stored explicitly in the operation documentation.
-func (e *Endpoint) Settings() (method, path string, version int) {
-	return e.method, e.path, e.version
-}
-
-// Get a map of Security Requirements for this endpoint to their respective Security Schemes.
-// Useful for authentication middleware.
-func (e *Endpoint) GetSecuritySchemes() map[*oasm.SecurityRequirement]oasm.SecurityScheme {
-	schemes := make(map[*oasm.SecurityRequirement]oasm.SecurityScheme)
-	if e.spec != nil && e.spec.Doc.Security != nil {
-		security := e.spec.Doc.Security
-		for i := range e.spec.Doc.Security {
-			schemes[&security[i]] = e.spec.Doc.Components.SecuritySchemes[security[i].Name]
-		}
-	}
-	security := e.Doc.Security
-	for i := range e.Doc.Security {
-		schemes[&security[i]] = e.spec.Doc.Components.SecuritySchemes[security[i].Name]
-	}
-	return schemes
-}
-
-// Add some options to the endpoint.
-// These can be processed by custom middleware via the Endpoint.Options map.
-func (e *Endpoint) Option(key string, value interface{}) *Endpoint {
-	e.Options[key] = value
+func (e *endpointObject) Option(key string, value interface{}) EndpointDeclaration {
+	e.options[key] = value
 	return e
 }
 
-// Set the version of this endpoint, updating the path to correspond to it
-func (e *Endpoint) Version(version int) *Endpoint {
+func (e *endpointObject) Version(version int) EndpointDeclaration {
 	if version <= 0 || e.version != 0 {
 		return e
 	}
-	e.Doc.OperationId += fmt.Sprintf("_v%v", version)
+	e.doc.OperationId += fmt.Sprintf("_v%v", version)
 	e.path = fmt.Sprintf("/v%v", version) + e.path
 	e.version = version
 	return e
 }
 
-// Attach a parameter doc.
-// Valid 'kind's are String, Int, Float64, and Bool
-func (e *Endpoint) Parameter(in, name, description string, required bool, schema interface{}, kind reflect.Kind) *Endpoint {
+func (e *endpointObject) Parameter(in, name, description string, required bool, schema interface{}, kind reflect.Kind) EndpointDeclaration {
 	param := oasm.Parameter{
 		Name:        name,
 		Description: description,
@@ -136,7 +107,7 @@ func (e *Endpoint) Parameter(in, name, description string, required bool, schema
 				"kind should be one of String, Int, Float64, Bool"))
 	}
 	t := typedParameter{kind, param}
-	e.Doc.Parameters = append(e.Doc.Parameters, param)
+	e.doc.Parameters = append(e.doc.Parameters, param)
 	switch in {
 	case oasm.InQuery:
 		e.query = append(e.query, t)
@@ -153,11 +124,9 @@ func (e *Endpoint) Parameter(in, name, description string, required bool, schema
 	return e
 }
 
-// Attach a request body doc.
-// `schema` will be used in the documentation, and `object` will be used for reading the body automatically.
-func (e *Endpoint) RequestBody(description string, required bool, schema, object interface{}) *Endpoint {
+func (e *endpointObject) RequestBody(description string, required bool, schema, object interface{}) EndpointDeclaration {
 	e.bodyType = reflect.TypeOf(object)
-	e.Doc.RequestBody = &oasm.RequestBody{
+	e.doc.RequestBody = &oasm.RequestBody{
 		Description: description,
 		Required:    required,
 		Content: oasm.MediaTypesMap{
@@ -169,8 +138,7 @@ func (e *Endpoint) RequestBody(description string, required bool, schema, object
 	return e
 }
 
-// Attach a response doc. Schema may be nil.
-func (e *Endpoint) Response(code int, description string, schema interface{}) *Endpoint {
+func (e *endpointObject) Response(code int, description string, schema interface{}) EndpointDeclaration {
 	r := oasm.Response{
 		Description: description,
 	}
@@ -181,37 +149,210 @@ func (e *Endpoint) Response(code int, description string, schema interface{}) *E
 			},
 		}
 	}
-	e.Doc.Responses.Codes[code] = r
+	e.doc.Responses.Codes[code] = r
 	return e
 }
 
-// Deprecate this endpoint.
-func (e *Endpoint) Deprecate(comment string) *Endpoint {
-	e.Doc.Deprecated = true
+func (e *endpointObject) Deprecate(comment string) EndpointDeclaration {
+	e.doc.Deprecated = true
 	if comment != "" {
-		e.Doc.Description += "<br/>DEPRECATED: " + comment
+		e.doc.Description += "<br/>DEPRECATED: " + comment
 	}
 	return e
 }
 
-// Attach a security doc.
-func (e *Endpoint) Security(name string, scopes []string) *Endpoint {
-	e.Doc.Security = append(e.Doc.Security, oasm.SecurityRequirement{
+func (e *endpointObject) Security(name string, scopes []string) EndpointDeclaration {
+	e.doc.Security = append(e.doc.Security, oasm.SecurityRequirement{
 		Name:   name,
 		Scopes: scopes,
 	})
 	return e
 }
 
-// Attach a function to run when calling this endpoint
-func (e *Endpoint) Func(f HandlerFunc) *Endpoint {
-	e.UserDefinedFunc = f
+func (e *endpointObject) MustDefine(f HandlerFunc) Endpoint {
+	_, err := e.Define(f)
+	if err != nil {
+		panic(errors.WithMessage(err, "endpoint must define but failed"))
+	}
 	return e
 }
 
-// Call this endpoint manually
-// `Call` should only be used for testing purposes mostly.
-func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
+func (e *endpointObject) Define(f HandlerFunc) (Endpoint, error) {
+	var err error
+
+	spec := e.spec
+	method, epPath, _ := e.Settings()
+
+	e.userDefinedFunc = f
+
+	// Create a schema for the data object.
+	querySchema := map[string]interface{}{
+		"type":       "object",
+		"required":   make([]string, 0, 3),
+		"properties": make(map[string]interface{}),
+	}
+	paramsSchema := map[string]interface{}{
+		"type":       "object",
+		"required":   make([]string, 0, 3),
+		"properties": make(map[string]interface{}),
+	}
+	headersSchema := map[string]interface{}{
+		"type":       "object",
+		"required":   make([]string, 0, 3),
+		"properties": make(map[string]interface{}),
+	}
+
+	dataSchema := map[string]interface{}{
+		"type": "object",
+		"required": []string{
+			"Query",
+			"Params",
+			"Headers",
+		},
+		"properties": map[string]interface{}{
+			"Query":   querySchema,
+			"Params":  paramsSchema,
+			"Headers": headersSchema,
+		},
+	}
+
+	// Create schema for request body.
+	doc := e.Doc()
+	if doc.RequestBody != nil {
+		b := doc.RequestBody
+		bodyContent := b.Content["application/json"]
+
+		// Resolve references
+		if ref, ok := bodyContent.Schema.(Ref); ok {
+			bodyContent.Schema = ref.toSwaggerSchema()
+			doc.RequestBody.Content["application/json"] = bodyContent
+			dataSchema["properties"].(map[string]interface{})["Body"] = ref.toJSONSchema(spec.schemasDir)
+		} else {
+			dataSchema["properties"].(map[string]interface{})["Body"] = bodyContent.Schema
+		}
+
+		// Set schema attributes.
+		if b.Required {
+			dataSchema["required"] = append(dataSchema["required"].([]string), "Body")
+		}
+	}
+
+	// Create schemas for parameters.
+	for i, p := range doc.Parameters {
+		var addToSchema *map[string]interface{}
+		var jsonSchema interface{}
+
+		switch p.In {
+		case oasm.InQuery:
+			addToSchema = &querySchema
+		case oasm.InPath:
+			addToSchema = &paramsSchema
+		case oasm.InHeader:
+			addToSchema = &headersSchema
+		default:
+			return nil, errors.New("invalid value for 'in' on parameter: " + p.Name)
+		}
+
+		// Resolve references.
+		if ref, ok := p.Schema.(Ref); ok {
+			doc.Parameters[i].Schema = ref.toSwaggerSchema()
+			jsonSchema = ref.toJSONSchema(spec.schemasDir)
+		} else {
+			jsonSchema = p.Schema
+		}
+
+		// Set schema attributes.
+		(*addToSchema)["properties"].(map[string]interface{})[p.Name] = jsonSchema
+		if p.Required {
+			(*addToSchema)["required"] = append((*addToSchema)["required"].([]string), p.Name)
+		}
+	}
+
+	// Save the schema to the endpoint.
+	e.dataSchema, err = gojsonschema.NewSchema(gojsonschema.NewGoLoader(dataSchema))
+	if err != nil {
+		return nil, errors.WithMessage(err, "failed to load dataSchema for endpoint: "+doc.OperationId)
+	}
+
+	// Create schemas for response codes
+	for code, response := range doc.Responses.Codes {
+		var jsonSchemaLoader interface{}
+		responseContent := response.Content["application/json"]
+		if responseContent.Schema == nil {
+			continue
+		}
+		if ref, ok := responseContent.Schema.(Ref); ok {
+			responseContent.Schema = ref.toSwaggerSchema()
+			response.Content["application/json"] = responseContent
+			doc.Responses.Codes[code] = response
+			jsonSchemaLoader = ref.toJSONSchema(spec.schemasDir)
+		} else {
+			jsonSchemaLoader = responseContent.Schema
+		}
+
+		e.responseSchemas[code], err = gojsonschema.NewSchema(gojsonschema.NewGoLoader(jsonSchemaLoader))
+		if err != nil {
+			return nil, errors.WithMessagef(err, "failed to load response schema: (%s, %v)", doc.OperationId, code)
+		}
+	}
+
+	// Create routes and docs for all endpoints
+	pathItem, ok := spec.doc.Paths[epPath]
+	if !ok {
+		pathItem = oasm.PathItem{
+			Methods: make(map[string]oasm.Operation)}
+		spec.doc.Paths[epPath] = pathItem
+	}
+	pathItem.Methods[method] = *doc
+	handler := e.UserDefinedFunc
+	if e.userDefinedFunc != nil {
+		handler = e.userDefinedFunc
+	}
+	if spec.middleware != nil {
+		for i := len(spec.middleware) - 1; i >= 0; i-- {
+			handler = spec.middleware[i](handler)
+		}
+	}
+	spec.routeCreator(method, epPath, http.HandlerFunc(e.Call))
+	e.fullyWrappedFunc = handler
+	return e, nil
+}
+
+func (e *endpointObject) Doc() *oasm.Operation {
+	return &e.doc
+}
+
+func (e *endpointObject) Options() map[string]interface{} {
+	return e.options
+}
+
+func (e *endpointObject) Settings() (method, path string, version int) {
+	return e.method, e.path, e.version
+}
+
+func (e *endpointObject) SecurityMapping() map[*oasm.SecurityRequirement]oasm.SecurityScheme {
+	schemes := make(map[*oasm.SecurityRequirement]oasm.SecurityScheme)
+	if e.spec.doc.Security != nil {
+		security := e.spec.doc.Security
+		for i := range e.spec.doc.Security {
+			schemes[&security[i]] = e.spec.doc.Components.SecuritySchemes[security[i].Name]
+		}
+	}
+	security := e.doc.Security
+	for i := range e.doc.Security {
+		schemes[&security[i]] = e.spec.doc.Components.SecuritySchemes[security[i].Name]
+	}
+	return schemes
+}
+
+func (e *endpointObject) UserDefinedFunc(d Data) (interface{}, error) {
+	if e.userDefinedFunc != nil {
+		return e.userDefinedFunc(d)
+	}
+	return nil, errors.New("endpoint function is not defined for: " + e.doc.OperationId)
+}
+
+func (e *endpointObject) Call(w http.ResponseWriter, r *http.Request) {
 	var (
 		errs   = make([]string, 0, 4)
 		data   = NewData(w, r, e)
@@ -225,12 +366,12 @@ func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		if valErr, ok := err.(JSONValidationError); ok {
+		if valErr, ok := err.(jsonValidationError); ok {
 			res = Response{
 				Body:   valErr,
 				Status: 400,
 			}
-		} else if malErr, ok := err.(MalformedJSONError); ok {
+		} else if malErr, ok := err.(malformedJSONError); ok {
 			res = Response{
 				Body:   malErr,
 				Status: 400,
@@ -260,7 +401,7 @@ func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
 			errs = append(errs, errors.WithMessage(err, "response body contains malformed json").Error())
 		} else if !result.Valid() {
 			errs = append(errs, errors.WithMessagef(
-				NewJSONValidationError(result),
+				newJSONValidationError(result),
 				"response body failed validation for status %v", res.Status).Error())
 		}
 	}
@@ -269,9 +410,19 @@ func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(res.Status)
 	} else {
 		var b []byte
-
-		if e.spec != nil && e.spec.JSONIndent > 0 {
-			b, err = json.MarshalIndent(res.Body, "", strings.Repeat(" ", e.spec.JSONIndent))
+		indent := e.spec.jsonIndent
+		h := r.Header.Get(JSONIndentHeader)
+		if h != "" {
+			i, err2 := strconv.Atoi(h)
+			if err2 != nil {
+				errs = append(errs, errors.WithMessagef(
+					err2, `Expected header '%s' to be an integer or empty, found %s`, JSONIndentHeader, h).Error())
+			} else {
+				indent = i
+			}
+		}
+		if indent > 0 {
+			b, err = json.MarshalIndent(res.Body, "", strings.Repeat(" ", e.spec.jsonIndent))
 		} else {
 			b, err = json.Marshal(res.Body)
 		}
@@ -290,14 +441,14 @@ func (e *Endpoint) Call(w http.ResponseWriter, r *http.Request) {
 	if len(errs) > 0 {
 		err = errors.New(strings.Join(errs, "\n  "))
 	}
-	if e.spec != nil && e.spec.ResponseAndErrorHandler != nil {
-		e.spec.ResponseAndErrorHandler(data, res, err)
+	if e.spec.responseAndErrorHandler != nil {
+		e.spec.responseAndErrorHandler(data, res, err)
 	} else {
 		e.printError(err)
 	}
 }
 
-func (e *Endpoint) parseRequest(data *Data) error {
+func (e *endpointObject) parseRequest(data *Data) error {
 	var err error
 	var requestBody []byte
 
@@ -343,10 +494,7 @@ func (e *Endpoint) parseRequest(data *Data) error {
 	}
 
 	if len(e.params) > 0 {
-		var basePathLength int
-		if e.spec != nil {
-			basePathLength = e.spec.basePathLength
-		}
+		basePathLength := e.spec.basePathLength
 		if e.version != 0 {
 			basePathLength += 1
 		}
@@ -389,10 +537,10 @@ func (e *Endpoint) parseRequest(data *Data) error {
 		loader := gojsonschema.NewGoLoader(dataJson)
 		result, err := e.dataSchema.Validate(loader)
 		if err != nil {
-			return NewMalformedJSONError(err)
+			return newMalformedJSONError(err)
 		}
 		if !result.Valid() {
-			return NewJSONValidationError(result)
+			return newJSONValidationError(result)
 		}
 	}
 
@@ -400,14 +548,14 @@ func (e *Endpoint) parseRequest(data *Data) error {
 		data.Body = reflect.New(e.bodyType).Interface()
 		err = json.Unmarshal(requestBody, data.Body)
 		if err != nil {
-			return NewMalformedJSONError(err)
+			return newMalformedJSONError(err)
 		}
 	}
 
 	return nil
 }
 
-func (e *Endpoint) runUserDefinedFunc(data Data) (res interface{}, err error) {
+func (e *endpointObject) runUserDefinedFunc(data Data) (res interface{}, err error) {
 	defer func() {
 		panicErr := recover()
 		if panicErr != nil {
@@ -416,15 +564,9 @@ func (e *Endpoint) runUserDefinedFunc(data Data) (res interface{}, err error) {
 			debug.PrintStack()
 		}
 	}()
-	if e.UserDefinedFunc == nil {
-		return res, errors.New("endpoint function is not defined")
-	}
-	if e.spec == nil {
-		return e.UserDefinedFunc(data)
-	}
 	return e.fullyWrappedFunc(data)
 }
 
-func (e *Endpoint) printError(err error) {
-	log.Printf("endpoint error (%s): %v\n", e.Doc.OperationId, err)
+func (e *endpointObject) printError(err error) {
+	log.Printf("endpoint error (%s): %v\n", e.doc.OperationId, err)
 }

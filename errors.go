@@ -8,33 +8,33 @@ import (
 	"strings"
 )
 
-func NewMalformedJSONError(err error) MalformedJSONError {
-	return MalformedJSONError(fmt.Sprint("request contains malformed JSON: ", err.Error()))
+func newMalformedJSONError(err error) malformedJSONError {
+	return malformedJSONError(fmt.Sprint("request contains malformed JSON: ", err.Error()))
 }
 
-type MalformedJSONError string
+type malformedJSONError string
 
-func (err MalformedJSONError) Error() string {
+func (err malformedJSONError) Error() string {
 	return string(err)
 }
 
-func NewJSONValidationError(result *gojsonschema.Result) JSONValidationError {
+func newJSONValidationError(result *gojsonschema.Result) jsonValidationError {
 	errorList := make([]string, 0, len(result.Errors()))
 	for _, e := range result.Errors() {
 		errorList = append(errorList, fmt.Sprintf("At %s: %s", e.Context().String(), e.Description()))
 	}
-	return JSONValidationError{
+	return jsonValidationError{
 		Type:   "JSONValidationError",
 		Errors: errorList,
 	}
 }
 
-type JSONValidationError struct {
+type jsonValidationError struct {
 	Type   string   `json:"type"`
 	Errors []string `json:"errors"`
 }
 
-func (err JSONValidationError) Error() string {
+func (err jsonValidationError) Error() string {
 	return "JSONValidationError:\n\t" + strings.Join(err.Errors, "\n\t")
 }
 

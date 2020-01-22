@@ -8,6 +8,10 @@ import (
 	"reflect"
 )
 
+const (
+	JSONIndentHeader = "Oas-Json-Indent"
+)
+
 // Use to create a reference to a defined schema.
 type Ref string
 
@@ -24,13 +28,13 @@ type typedParameter struct {
 	oasm.Parameter
 }
 
-func NewData(w http.ResponseWriter, r *http.Request, e *Endpoint) Data {
+func NewData(w http.ResponseWriter, r *http.Request, e Endpoint) Data {
 	return Data{
 		Req:       r,
 		ResWriter: w,
-		Query:     make(MapAny, len(e.query)),
-		Params:    make(MapAny, len(e.params)),
-		Headers:   make(MapAny, len(e.headers)),
+		Query:     make(MapAny),
+		Params:    make(MapAny),
+		Headers:   make(MapAny),
 		Endpoint:  e,
 		Extra:     make(MapAny),
 	}
@@ -52,7 +56,7 @@ type Data struct {
 	// The request body, marshaled into the type of object which was set up on this endpoint during initialization.
 	Body interface{}
 	// The endpoint which was called.
-	Endpoint *Endpoint
+	Endpoint Endpoint
 	// A place to attach any kind of data using middleware.
 	Extra MapAny
 }
