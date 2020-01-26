@@ -6,13 +6,12 @@ import (
 	copy2 "github.com/otiai10/copy"
 	"github.com/pkg/errors"
 	"github.com/tjbrockmeyer/oasm"
-	"github.com/xeipuuv/gojsonschema"
+	"github.com/tjbrockmeyer/vjsonschema"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -51,7 +50,8 @@ type openAPI struct {
 	responseAndErrorHandler ResponseAndErrorHandler
 	dir                     string
 	basePathLength          int
-	schemasDir              string
+	validatorBuilder        vjsonschema.Builder
+	validator               vjsonschema.Validator
 	middleware              []Middleware
 	routeCreator            RouteCreator
 	endpoints               map[string]Endpoint
@@ -106,12 +106,12 @@ func NewOpenAPI(
 			Paths:      make(oasm.PathsMap),
 			Components: oasm.Components{},
 		},
-		jsonIndent:   2,
-		dir:          dir,
-		schemasDir:   schemasDir,
-		middleware:   middleware,
-		routeCreator: routeCreator,
-		endpoints:    make(map[string]Endpoint),
+		jsonIndent:       2,
+		dir:              dir,
+		validatorBuilder: vjsonschema.NewBuilder(),
+		middleware:       middleware,
+		routeCreator:     routeCreator,
+		endpoints:        make(map[string]Endpoint),
 	}
 	if err := os.MkdirAll(dir, os.ModePerm); err != nil && !os.IsExist(err) {
 		return nil, nil, err
@@ -127,30 +127,15 @@ func NewOpenAPI(
 		}
 	}
 
+	if err := o.validatorBuilder.AddDir("", schemasDir); err != nil {
+		return nil, nil, errors.WithMessage(err, "failed to read the schema directory")
+	}
+
 	if o.doc.Components.Schemas == nil {
 		o.doc.Components.Schemas = make(map[string]interface{})
 	}
-
-	// Gather all schemas, creating separate swagger schemas.
-	err = filepath.Walk(schemasDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		name := info.Name()
-		if !strings.HasSuffix(name, ".json") {
-			return nil
-		}
-		typeName := name[:len(name)-5]
-		contents, err := ioutil.ReadFile(path)
-		swaggerSchemaContents := refRegex.ReplaceAll(contents, []byte(`"$$ref":"#/components/schemas/$1"`))
-		o.doc.Components.Schemas[typeName] = json.RawMessage(swaggerSchemaContents)
-		if err != nil {
-			return errors.WithMessage(err, "failed to parse json schema for "+typeName)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, nil, errors.WithMessage(err, "failed to read the schema directory")
+	for k, s := range o.validatorBuilder.GetSchemas() {
+		o.doc.Components.Schemas[k] = json.RawMessage(vjsonschema.SchemaRefReplace(s, refNameToSwaggerRef))
 	}
 
 	// Create Swagger UI
@@ -212,17 +197,17 @@ func (o *openAPI) NewEndpoint(operationId, method, path, summary, description st
 			},
 			Security: make([]oasm.SecurityRequirement, 0, 1),
 		},
-		options:         make(map[string]interface{}, 3),
-		path:            path,
-		method:          strings.ToLower(method),
-		parsedPath:      parsedPath,
-		bodyType:        nil,
-		query:           make([]typedParameter, 0, 3),
-		params:          make(map[int]typedParameter, 3),
-		headers:         make([]typedParameter, 0, 3),
-		dataSchema:      nil,
-		responseSchemas: make(map[int]*gojsonschema.Schema),
-		spec:            o,
+		options:            make(map[string]interface{}, 3),
+		path:               path,
+		method:             strings.ToLower(method),
+		parsedPath:         parsedPath,
+		bodyType:           nil,
+		query:              make([]typedParameter, 0, 3),
+		params:             make(map[int]typedParameter, 3),
+		headers:            make([]typedParameter, 0, 3),
+		reqSchemaName:      "endpoint_" + operationId + "_request",
+		responseSchemaRefs: make(map[int]string),
+		spec:               o,
 	}
 	o.endpoints[operationId] = e
 	return e
@@ -234,9 +219,11 @@ func (o *openAPI) Endpoints() map[string]Endpoint {
 
 func (o *openAPI) Save() error {
 	if b, err := json.Marshal(o.doc); err != nil {
-		return fmt.Errorf("could not marshal Open API 3 spec: %s", err.Error())
+		return errors.WithMessage(err, "could not marshal Open API 3 spec: %s")
 	} else if err = ioutil.WriteFile(path.Join(o.dir, specPath), b, 0644); err != nil {
 		return fmt.Errorf("could not write Open API 3 spec to %s: %s", o.dir, err.Error())
+	} else if o.validator, err = o.validatorBuilder.Compile(); err != nil {
+		return errors.WithMessage(err, "could not compile jsonschema validator")
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
 {
   "type": "array",
-  "items": {"$ref": "file://schemas/Result.json"}
+  "items": {"$ref": "{Result}"}
 }

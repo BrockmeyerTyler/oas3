@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/tjbrockmeyer/oasm"
+	"github.com/tjbrockmeyer/vjsonschema"
 	"net/http"
 	"reflect"
 )
@@ -15,16 +16,21 @@ const (
 // Use to create a reference to a defined schema.
 type Ref string
 
-func (r Ref) toSwaggerSchema() json.RawMessage {
-	return json.RawMessage(fmt.Sprintf(`{"$ref":"#/components/schemas/%s"}`, r))
+func refNameToSwaggerRef(ref string) string {
+	return "#/components/schemas/" + ref
 }
 
-func (r Ref) toJSONSchema(schemasDir string) json.RawMessage {
-	return json.RawMessage(fmt.Sprintf(`{"$ref":"file://%s/%s.json"}`, schemasDir, r))
+func refNameToSwaggerRefObject(ref string) json.RawMessage {
+	return vjsonschema.SchemaRefReplace(refNameToObject(ref), refNameToSwaggerRef)
+}
+
+func refNameToObject(ref string) json.RawMessage {
+	return []byte(fmt.Sprintf(`{"$ref":"%s"}`, ref))
 }
 
 type typedParameter struct {
-	kind reflect.Kind
+	kind       reflect.Kind
+	jsonSchema interface{}
 	oasm.Parameter
 }
 

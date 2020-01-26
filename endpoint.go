@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/pkg/errors"
 	"github.com/tjbrockmeyer/oasm"
-	"github.com/xeipuuv/gojsonschema"
+	"github.com/tjbrockmeyer/vjsonschema"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -60,6 +60,7 @@ type Endpoint interface {
 type endpointObject struct {
 	doc     oasm.Operation
 	options map[string]interface{}
+	err     error
 
 	path    string
 	method  string
@@ -70,13 +71,15 @@ type endpointObject struct {
 	spec             *openAPI
 	parsedPath       map[string]int
 
-	bodyType reflect.Type
-	query    []typedParameter
-	params   map[int]typedParameter
-	headers  []typedParameter
+	bodyType       reflect.Type
+	bodyJsonSchema interface{}
 
-	dataSchema      *gojsonschema.Schema
-	responseSchemas map[int]*gojsonschema.Schema
+	query   []typedParameter
+	params  map[int]typedParameter
+	headers []typedParameter
+
+	reqSchemaName      string
+	responseSchemaRefs map[int]string
 }
 
 func (e *endpointObject) Option(key string, value interface{}) EndpointDeclaration {
@@ -103,12 +106,29 @@ func (e *endpointObject) Parameter(in, name, description string, required bool, 
 		Schema:      schema,
 	}
 	if kind != reflect.String && kind != reflect.Int && kind != reflect.Float64 && kind != reflect.Bool {
-		e.printError(errors.New(
+		e.err = errors.New(
 			fmt.Sprintf("invalid kind for parameter %s in %s: ", name, in) +
-				"kind should be one of String, Int, Float64, Bool"))
+				"kind should be one of String, Int, Float64, Bool")
+		return e
 	}
-	t := typedParameter{kind, param}
+	t := typedParameter{kind, "", param}
+
+	// Handle jsonschema and swagger schemas including references.
+	if ref, ok := schema.(Ref); ok {
+		t.jsonSchema = refNameToObject(string(ref))
+		param.Schema = refNameToSwaggerRefObject(string(ref))
+	} else {
+		b, err := json.Marshal(schema)
+		if err != nil {
+			e.err = errors.WithMessage(err, "failed to marshal parameter schema: "+e.doc.OperationId+" "+in+" "+name)
+			return e
+		}
+		t.jsonSchema = json.RawMessage(b)
+		param.Schema = json.RawMessage(vjsonschema.SchemaRefReplace(b, refNameToSwaggerRef))
+	}
 	e.doc.Parameters = append(e.doc.Parameters, param)
+
+	// Handle go-type of the parameter
 	switch in {
 	case oasm.InQuery:
 		e.query = append(e.query, t)
@@ -126,6 +146,20 @@ func (e *endpointObject) Parameter(in, name, description string, required bool, 
 }
 
 func (e *endpointObject) RequestBody(description string, required bool, schema, object interface{}) EndpointDeclaration {
+	// Handle jsonschema and swagger schemas including references.
+	if ref, ok := schema.(Ref); ok {
+		e.bodyJsonSchema = refNameToObject(string(ref))
+		schema = refNameToSwaggerRefObject(string(ref))
+	} else {
+		b, err := json.Marshal(schema)
+		if err != nil {
+			e.err = errors.WithMessage(err, "failed to marshal request body schema: "+e.doc.OperationId)
+			return e
+		}
+		e.bodyJsonSchema = b
+		schema = json.RawMessage(vjsonschema.SchemaRefReplace(b, refNameToSwaggerRef))
+	}
+
 	e.bodyType = reflect.TypeOf(object)
 	e.doc.RequestBody = &oasm.RequestBody{
 		Description: description,
@@ -143,7 +177,30 @@ func (e *endpointObject) Response(code int, description string, schema interface
 	r := oasm.Response{
 		Description: description,
 	}
+
 	if schema != nil {
+		jsonSchemaRef := fmt.Sprint("endpoint_", e.doc.OperationId, "_response_", code)
+		e.responseSchemaRefs[code] = jsonSchemaRef
+		var jsonSchema []byte
+
+		// Handle jsonschema and swagger schemas including references.
+		if ref, ok := schema.(Ref); ok {
+			jsonSchema = refNameToObject(string(ref))
+			schema = refNameToSwaggerRefObject(string(ref))
+		} else {
+			b, err := json.Marshal(schema)
+			if err != nil {
+				e.err = errors.WithMessage(err, "failed to marshal response schema: "+fmt.Sprintf(e.doc.OperationId, code))
+				return e
+			}
+			jsonSchema = b
+			schema = json.RawMessage(vjsonschema.SchemaRefReplace(b, refNameToSwaggerRef))
+		}
+		if err := e.spec.validatorBuilder.AddSchema(jsonSchemaRef, jsonSchema); err != nil {
+			e.err = errors.WithMessage(err, "failed to add response schema: "+fmt.Sprint(e.doc.OperationId, " ", code))
+			return e
+		}
+
 		r.Content = oasm.MediaTypesMap{
 			oasm.MimeJson: {
 				Schema: schema,
@@ -179,6 +236,9 @@ func (e *endpointObject) MustDefine(f HandlerFunc) Endpoint {
 }
 
 func (e *endpointObject) Define(f HandlerFunc) (Endpoint, error) {
+	if e.err != nil {
+		return nil, e.err
+	}
 	var err error
 
 	spec := e.spec
@@ -220,81 +280,38 @@ func (e *endpointObject) Define(f HandlerFunc) (Endpoint, error) {
 	// Create schema for request body.
 	doc := e.Doc()
 	if doc.RequestBody != nil {
-		b := doc.RequestBody
-		bodyContent := b.Content["application/json"]
-
-		// Resolve references
-		if ref, ok := bodyContent.Schema.(Ref); ok {
-			bodyContent.Schema = ref.toSwaggerSchema()
-			doc.RequestBody.Content["application/json"] = bodyContent
-			dataSchema["properties"].(map[string]interface{})["Body"] = ref.toJSONSchema(spec.schemasDir)
-		} else {
-			dataSchema["properties"].(map[string]interface{})["Body"] = bodyContent.Schema
-		}
-
-		// Set schema attributes.
-		if b.Required {
+		dataSchema["properties"].(map[string]interface{})["Body"] = e.bodyJsonSchema
+		if doc.RequestBody.Required {
 			dataSchema["required"] = append(dataSchema["required"].([]string), "Body")
 		}
 	}
 
-	// Create schemas for parameters.
-	for i, p := range doc.Parameters {
-		var addToSchema *map[string]interface{}
-		var jsonSchema interface{}
-
-		switch p.In {
-		case oasm.InQuery:
-			addToSchema = &querySchema
-		case oasm.InPath:
-			addToSchema = &paramsSchema
-		case oasm.InHeader:
-			addToSchema = &headersSchema
-		default:
-			return nil, errors.New("invalid value for 'in' on parameter: " + p.Name)
-		}
-
-		// Resolve references.
-		if ref, ok := p.Schema.(Ref); ok {
-			doc.Parameters[i].Schema = ref.toSwaggerSchema()
-			jsonSchema = ref.toJSONSchema(spec.schemasDir)
-		} else {
-			jsonSchema = p.Schema
-		}
-
-		// Set schema attributes.
-		(*addToSchema)["properties"].(map[string]interface{})[p.Name] = jsonSchema
-		if p.Required {
-			(*addToSchema)["required"] = append((*addToSchema)["required"].([]string), p.Name)
+	// Create schema for a single parameter:
+	addToSchema := func(addTo *map[string]interface{}, t typedParameter) {
+		(*addTo)["properties"].(map[string]interface{})[t.Name] = t.jsonSchema
+		if t.Required {
+			(*addTo)["required"] = append((*addTo)["required"].([]string), t.Name)
 		}
 	}
 
-	// Save the schema to the endpoint.
-	e.dataSchema, err = gojsonschema.NewSchema(gojsonschema.NewGoLoader(dataSchema))
+	// Create schemas for all parameters
+	for _, p := range e.query {
+		addToSchema(&querySchema, p)
+	}
+	for _, p := range e.params {
+		addToSchema(&paramsSchema, p)
+	}
+	for _, p := range e.headers {
+		addToSchema(&headersSchema, p)
+	}
+
+	// Save the name of the schema for use in validations.
+	dataSchemaBytes, err := json.Marshal(dataSchema)
 	if err != nil {
-		return nil, errors.WithMessage(err, "failed to load dataSchema for endpoint: "+doc.OperationId)
+		return nil, errors.WithMessage(err, "failed to marshal data schema for: "+e.doc.OperationId)
 	}
-
-	// Create schemas for response codes
-	for code, response := range doc.Responses.Codes {
-		var jsonSchemaLoader interface{}
-		responseContent := response.Content["application/json"]
-		if responseContent.Schema == nil {
-			continue
-		}
-		if ref, ok := responseContent.Schema.(Ref); ok {
-			responseContent.Schema = ref.toSwaggerSchema()
-			response.Content["application/json"] = responseContent
-			doc.Responses.Codes[code] = response
-			jsonSchemaLoader = ref.toJSONSchema(spec.schemasDir)
-		} else {
-			jsonSchemaLoader = responseContent.Schema
-		}
-
-		e.responseSchemas[code], err = gojsonschema.NewSchema(gojsonschema.NewGoLoader(jsonSchemaLoader))
-		if err != nil {
-			return nil, errors.WithMessagef(err, "failed to load response schema: (%s, %v)", doc.OperationId, code)
-		}
+	if err := e.spec.validatorBuilder.AddSchema(e.reqSchemaName, dataSchemaBytes); err != nil {
+		return nil, errors.WithMessage(err, "failed to add/parse data schema for: "+e.doc.OperationId)
 	}
 
 	// Create routes and docs for all endpoints
@@ -396,17 +413,6 @@ func (e *endpointObject) Call(w http.ResponseWriter, r *http.Request) {
 		res.Status = 200
 	}
 
-	if schema, ok := e.responseSchemas[res.Status]; ok {
-		result, err := schema.Validate(gojsonschema.NewGoLoader(res.Body))
-		if err != nil {
-			errs = append(errs, errors.WithMessage(err, "response body contains malformed json").Error())
-		} else if !result.Valid() {
-			errs = append(errs, errors.WithMessagef(
-				newJSONValidationError(result),
-				"response body failed validation for status %v", res.Status).Error())
-		}
-	}
-
 	if res.Body == nil {
 		w.WriteHeader(res.Status)
 	} else {
@@ -436,6 +442,22 @@ func (e *endpointObject) Call(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(res.Status)
 		if _, err = w.Write(b); err != nil {
 			errs = append(errs, errors.WithMessage(err, "error occurred while writing the response body").Error())
+		}
+	}
+
+	// Validate response body
+	if schema, ok := e.responseSchemaRefs[res.Status]; ok {
+		bodyBytes, err := json.Marshal(res.Body)
+		if err != nil {
+			errs = append(errs, errors.WithMessage(err, "failed to marshal response body").Error())
+		}
+		result, err := e.spec.validator.Validate(schema, bodyBytes)
+		if err != nil {
+			errs = append(errs, errors.WithMessage(err, "response body contains malformed json").Error())
+		} else if !result.Valid() {
+			errs = append(errs, errors.WithMessagef(
+				newJSONValidationError(result),
+				"response body failed validation for status %v", res.Status).Error())
 		}
 	}
 
@@ -526,23 +548,24 @@ func (e *endpointObject) parseRequest(data *Data) error {
 		}
 	}
 
-	if e.dataSchema != nil {
-		dataJson := map[string]interface{}{
-			"Query":   data.Query,
-			"Params":  data.Params,
-			"Headers": data.Headers,
-		}
-		if e.bodyType != nil {
-			dataJson["Body"] = json.RawMessage(requestBody)
-		}
-		loader := gojsonschema.NewGoLoader(dataJson)
-		result, err := e.dataSchema.Validate(loader)
-		if err != nil {
-			return newMalformedJSONError(err)
-		}
-		if !result.Valid() {
-			return newJSONValidationError(result)
-		}
+	dataJson := map[string]interface{}{
+		"Query":   data.Query,
+		"Params":  data.Params,
+		"Headers": data.Headers,
+	}
+	if e.bodyType != nil {
+		dataJson["Body"] = json.RawMessage(requestBody)
+	}
+	b, err := json.Marshal(dataJson)
+	if err != nil {
+		return newMalformedJSONError(err)
+	}
+	result, err := e.spec.validator.Validate(e.reqSchemaName, b)
+	if err != nil {
+		return newMalformedJSONError(err)
+	}
+	if !result.Valid() {
+		return newJSONValidationError(result)
 	}
 
 	if e.bodyType != nil {

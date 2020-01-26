@@ -96,7 +96,7 @@ func defineEndpoints(spec oas.OpenAPI) {
 		Parameter("query", "q", "The search query", true, strSchema, reflect.String).
 		Parameter("query", "limit", "Limit the amount of returned results", false, intSchema, reflect.Int).
 		Parameter("query", "skip", "How many results to skip over before returning", false, intSchema, reflect.Int).
-		Response(200, "Results were found", oas.Ref("SearchResults")).
+		Response(200, "Results were found", oas.Ref("{SearchResults}")).
 		Response(204, "No results found", nil).
 		MustDefine(func(data oas.Data) (interface{}, error) {
 			// Your search logic here...
@@ -106,7 +106,7 @@ func defineEndpoints(spec oas.OpenAPI) {
 	spec.NewEndpoint("getItem", "GET", "/item/{item}", "Get an Item", "Like, really get an Item if you want it", []string{"Tag1"}).
 		Version(2).
 		Parameter("path", "item", "the item to get", true, strSchema, reflect.String).
-		Response(200, "Results were found", oas.Ref("SearchResults")).
+		Response(200, "Results were found", oas.Ref("{SearchResults}")).
 		Response(204, "Item does not exist", nil).
 		MustDefine(func(data oas.Data) (interface{}, error) {
 			return json.RawMessage(fmt.Sprintf(`"got item: '%s'"`, data.Params["item"])), nil
@@ -115,7 +115,7 @@ func defineEndpoints(spec oas.OpenAPI) {
 	spec.NewEndpoint("putItem", "PUT", "/item/{item}", "Put an Item", "Like, really put an Item if you want to", []string{"Tag2"}).
 		Version(1).
 		Parameter("path", "item", "the item to put", true, strSchema, reflect.String).
-		RequestBody("Item details", true, oas.Ref("Result"), Result{}).
+		RequestBody("Item details", true, oas.Ref("{Result}"), Result{}).
 		Response(201, "Created/Updated", nil).
 		MustDefine(func(data oas.Data) (interface{}, error) {
 			return json.RawMessage(fmt.Sprintf(`"put item: '%s'"`, data.Params["item"])), nil
