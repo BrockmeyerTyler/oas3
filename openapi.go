@@ -127,7 +127,7 @@ func NewOpenAPI(
 		}
 	}
 
-	if err := o.validatorBuilder.AddDir("", schemasDir); err != nil {
+	if err := o.validatorBuilder.AddDir(schemasDir); err != nil {
 		return nil, nil, errors.WithMessage(err, "failed to read the schema directory")
 	}
 
