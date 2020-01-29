@@ -1,37 +1,35 @@
 package oas
 
 import (
-	"encoding/json"
-	"fmt"
-	"github.com/tjbrockmeyer/oasm"
-	"github.com/tjbrockmeyer/vjsonschema"
 	"net/http"
-	"reflect"
 )
 
 const (
 	JSONIndentHeader = "Oas-Json-Indent"
 )
 
-// Use to create a reference to a defined schema.
-type Ref string
+// Utility function for creating reference schemas.
+func Ref(ref string) interface{} {
+	return struct {
+		Ref string `json:"$ref"`
+	}{
+		Ref: ref,
+	}
+}
+
+// Utility function for creating basic array schemas that use the itemsSchema for all items.
+func ArrayOf(itemsSchema interface{}) interface{} {
+	return struct {
+		Type  string      `json:"type"`
+		Items interface{} `json:"items"`
+	}{
+		Type:  "array",
+		Items: itemsSchema,
+	}
+}
 
 func refNameToSwaggerRef(ref string) string {
 	return "#/components/schemas/" + ref
-}
-
-func refNameToSwaggerRefObject(ref string) json.RawMessage {
-	return vjsonschema.SchemaRefReplace(refNameToObject(ref), refNameToSwaggerRef)
-}
-
-func refNameToObject(ref string) json.RawMessage {
-	return []byte(fmt.Sprintf(`{"$ref":"%s"}`, ref))
-}
-
-type typedParameter struct {
-	kind       reflect.Kind
-	jsonSchema interface{}
-	oasm.Parameter
 }
 
 func NewData(w http.ResponseWriter, r *http.Request, e Endpoint) Data {

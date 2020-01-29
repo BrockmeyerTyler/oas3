@@ -72,7 +72,7 @@ type endpointObject struct {
 	parsedPath       map[string]int
 
 	bodyType       reflect.Type
-	bodyJsonSchema interface{}
+	bodyJsonSchema json.RawMessage
 
 	query   []typedParameter
 	params  map[int]typedParameter
@@ -80,6 +80,12 @@ type endpointObject struct {
 
 	reqSchemaName      string
 	responseSchemaRefs map[int]string
+}
+
+type typedParameter struct {
+	kind       reflect.Kind
+	jsonSchema json.RawMessage
+	oasm.Parameter
 }
 
 func (e *endpointObject) Option(key string, value interface{}) EndpointDeclaration {
@@ -111,21 +117,16 @@ func (e *endpointObject) Parameter(in, name, description string, required bool, 
 				"kind should be one of String, Int, Float64, Bool")
 		return e
 	}
-	t := typedParameter{kind, "", param}
+	t := typedParameter{kind, nil, param}
 
 	// Handle jsonschema and swagger schemas including references.
-	if ref, ok := schema.(Ref); ok {
-		t.jsonSchema = refNameToObject(string(ref))
-		param.Schema = refNameToSwaggerRefObject(string(ref))
-	} else {
-		b, err := json.Marshal(schema)
-		if err != nil {
-			e.err = errors.WithMessage(err, "failed to marshal parameter schema: "+e.doc.OperationId+" "+in+" "+name)
-			return e
-		}
-		t.jsonSchema = json.RawMessage(b)
-		param.Schema = json.RawMessage(vjsonschema.SchemaRefReplace(b, refNameToSwaggerRef))
+	b, err := json.Marshal(schema)
+	if err != nil {
+		e.err = errors.WithMessage(err, "failed to marshal parameter schema: "+e.doc.OperationId+" "+in+" "+name)
+		return e
 	}
+	t.jsonSchema = b
+	param.Schema = json.RawMessage(vjsonschema.SchemaRefReplace(b, refNameToSwaggerRef))
 	e.doc.Parameters = append(e.doc.Parameters, param)
 
 	// Handle go-type of the parameter
@@ -147,18 +148,13 @@ func (e *endpointObject) Parameter(in, name, description string, required bool, 
 
 func (e *endpointObject) RequestBody(description string, required bool, schema, object interface{}) EndpointDeclaration {
 	// Handle jsonschema and swagger schemas including references.
-	if ref, ok := schema.(Ref); ok {
-		e.bodyJsonSchema = refNameToObject(string(ref))
-		schema = refNameToSwaggerRefObject(string(ref))
-	} else {
-		b, err := json.Marshal(schema)
-		if err != nil {
-			e.err = errors.WithMessage(err, "failed to marshal request body schema: "+e.doc.OperationId)
-			return e
-		}
-		e.bodyJsonSchema = b
-		schema = json.RawMessage(vjsonschema.SchemaRefReplace(b, refNameToSwaggerRef))
+	b, err := json.Marshal(schema)
+	if err != nil {
+		e.err = errors.WithMessage(err, "failed to marshal request body schema: "+e.doc.OperationId)
+		return e
 	}
+	e.bodyJsonSchema = json.RawMessage(b)
+	schema = json.RawMessage(vjsonschema.SchemaRefReplace(b, refNameToSwaggerRef))
 
 	e.bodyType = reflect.TypeOf(object)
 	e.doc.RequestBody = &oasm.RequestBody{
@@ -181,22 +177,15 @@ func (e *endpointObject) Response(code int, description string, schema interface
 	if schema != nil {
 		jsonSchemaRef := fmt.Sprint("endpoint_", e.doc.OperationId, "_response_", code)
 		e.responseSchemaRefs[code] = jsonSchemaRef
-		var jsonSchema []byte
 
 		// Handle jsonschema and swagger schemas including references.
-		if ref, ok := schema.(Ref); ok {
-			jsonSchema = refNameToObject(string(ref))
-			schema = refNameToSwaggerRefObject(string(ref))
-		} else {
-			b, err := json.Marshal(schema)
-			if err != nil {
-				e.err = errors.WithMessage(err, "failed to marshal response schema: "+fmt.Sprintf(e.doc.OperationId, code))
-				return e
-			}
-			jsonSchema = b
-			schema = json.RawMessage(vjsonschema.SchemaRefReplace(b, refNameToSwaggerRef))
+		b, err := json.Marshal(schema)
+		if err != nil {
+			e.err = errors.WithMessage(err, "failed to marshal response schema: "+fmt.Sprintf(e.doc.OperationId, code))
+			return e
 		}
-		if err := e.spec.validatorBuilder.AddSchema(jsonSchemaRef, jsonSchema); err != nil {
+		schema = json.RawMessage(vjsonschema.SchemaRefReplace(b, refNameToSwaggerRef))
+		if err := e.spec.validatorBuilder.AddSchema(jsonSchemaRef, b); err != nil {
 			e.err = errors.WithMessage(err, "failed to add response schema: "+fmt.Sprint(e.doc.OperationId, " ", code))
 			return e
 		}
