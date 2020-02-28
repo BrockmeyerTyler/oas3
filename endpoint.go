@@ -369,31 +369,32 @@ func (e *endpointObject) UserDefinedFunc(d Data) (interface{}, error) {
 
 func (e *endpointObject) Call(w http.ResponseWriter, r *http.Request) {
 	var (
-		errs   = make([]string, 0, 4)
 		data   = NewData(w, r, e)
 		output interface{}
 		res    Response
 	)
 
-	err := e.parseRequest(&data)
-	if err == nil {
-		output, err = e.runUserDefinedFunc(data)
+	endpointError := e.parseRequest(&data)
+	if endpointError == nil {
+		output, endpointError = e.runUserDefinedFunc(data)
 	}
 
-	if err != nil {
-		if valErr, ok := err.(jsonValidationError); ok {
+	if endpointError != nil {
+		if valErr, ok := endpointError.(jsonValidationError); ok {
 			res = Response{
 				Body:   valErr,
 				Status: 400,
 			}
-		} else if malErr, ok := err.(malformedJSONError); ok {
+			endpointError = nil
+		} else if malErr, ok := endpointError.(malformedJSONError); ok {
 			res = Response{
 				Body:   malErr,
 				Status: 400,
 			}
+			endpointError = nil
 		} else {
 			res = Response{
-				Body:   errorToJSON(err),
+				Body:   "Internal Server Error",
 				Status: 500,
 			}
 		}
@@ -414,31 +415,32 @@ func (e *endpointObject) Call(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(res.Status)
 	} else {
 		var b []byte
+		var err error
 		indent := e.spec.jsonIndent
 		h := r.Header.Get(JSONIndentHeader)
 		if h != "" {
 			i, err2 := strconv.Atoi(h)
 			if err2 != nil {
-				errs = append(errs, errors.WithMessagef(
-					err2, `Expected header '%s' to be an integer or empty, found %s`, JSONIndentHeader, h).Error())
+				e.printError(errors.WithMessagef(
+					err2, `Expected header '%s' to be an integer or empty, found %s`, JSONIndentHeader, h))
 			} else {
 				indent = i
 			}
 		}
 		if indent > 0 {
-			b, err = json.MarshalIndent(res.Body, "", strings.Repeat(" ", e.spec.jsonIndent))
+			b, err = json.MarshalIndent(res.Body, "", strings.Repeat(" ", indent))
 		} else {
 			b, err = json.Marshal(res.Body)
 		}
 		if err != nil {
-			errs = append(errs, errors.WithMessagef(err, "failed to marshal body (%v)", res.Body).Error())
+			e.printError(errors.WithMessagef(err, "failed to marshal response body (%v)", res.Body))
 			res.Status = 500
-			b = errorToJSON(err)
+			b = []byte("Internal Server Error")
 		}
 
 		w.WriteHeader(res.Status)
 		if _, err = w.Write(b); err != nil {
-			errs = append(errs, errors.WithMessage(err, "error occurred while writing the response body").Error())
+			e.printError(errors.WithMessage(err, "error occurred while writing the response body"))
 		}
 	}
 
@@ -446,25 +448,22 @@ func (e *endpointObject) Call(w http.ResponseWriter, r *http.Request) {
 	if schema, ok := e.responseSchemaRefs[res.Status]; ok {
 		bodyBytes, err := json.Marshal(res.Body)
 		if err != nil {
-			errs = append(errs, errors.WithMessage(err, "failed to marshal response body").Error())
-		}
-		result, err := e.spec.validator.Validate(schema, bodyBytes)
-		if err != nil {
-			errs = append(errs, errors.WithMessage(err, "response body contains malformed json").Error())
-		} else if !result.Valid() {
-			errs = append(errs, errors.WithMessagef(
-				newJSONValidationError(result),
-				"response body failed validation for status %v", res.Status).Error())
+			e.printError(errors.WithMessage(err, "failed to marshal response body"))
+		} else {
+			result, err := e.spec.validator.Validate(schema, bodyBytes)
+			if err != nil {
+				e.printError(errors.WithMessage(err, "response body contains malformed json"))
+			} else if !result.Valid() {
+				e.printError(errors.WithMessagef(
+					newJSONValidationError(result), "response body failed validation for status %v", res.Status))
+			}
 		}
 	}
 
-	if len(errs) > 0 {
-		err = errors.New(strings.Join(errs, "\n  "))
-	}
 	if e.spec.responseAndErrorHandler != nil {
-		e.spec.responseAndErrorHandler(data, res, err)
+		e.spec.responseAndErrorHandler(data, res, endpointError)
 	} else {
-		e.printError(err)
+		e.printError(endpointError)
 	}
 }
 
@@ -584,7 +583,6 @@ func (e *endpointObject) parseRequest(data *Data) error {
 			return newMalformedJSONError(err)
 		}
 	}
-
 	return nil
 }
 
