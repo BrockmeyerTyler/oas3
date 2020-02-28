@@ -209,7 +209,11 @@ func (o *openAPI) NewEndpoint(operationId, method, path, summary, description st
 		responseSchemaRefs: make(map[int]string),
 		spec:               o,
 	}
-	o.endpoints[operationId] = e
+	if _, ok := o.endpoints[operationId]; ok {
+		e.err = errors.New("duplicate endpoint definition for operationId: " + operationId)
+	} else {
+		o.endpoints[operationId] = e
+	}
 	return e
 }
 

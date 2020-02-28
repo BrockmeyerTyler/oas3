@@ -3,6 +3,7 @@ package oas
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/tjbrockmeyer/oasm"
 	"github.com/xeipuuv/gojsonschema"
 	"strconv"
 	"strings"
@@ -26,6 +27,15 @@ func newJSONValidationError(result *gojsonschema.Result) jsonValidationError {
 	return jsonValidationError{
 		Type:   "JSONValidationError",
 		Errors: errorList,
+	}
+}
+
+func newParameterTypeError(param oasm.Parameter, received, expectedType string) jsonValidationError {
+	return jsonValidationError{
+		Type: "ParameterTypeError",
+		Errors: []string{
+			fmt.Sprintf("%s.%s: expected (%s) to be convertible to type %s", param.In, param.Name, received, expectedType),
+		},
 	}
 }
 

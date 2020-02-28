@@ -22,8 +22,9 @@ type EndpointDeclaration interface {
 	// Set the version of this endpoint, updating the path to correspond to it
 	Version(int) EndpointDeclaration
 	// Attach a parameter doc.
-	// Valid 'kind's are String, Int, Float64, and Bool
-	Parameter(in string, name string, description string, required bool, schema interface{}, kind reflect.Kind) EndpointDeclaration
+	// Valid 'in's are query, path, and header.
+	// Valid 'kind's are String, Int, Float64, and Bool.
+	Parameter(in, name, description string, required bool, schema interface{}, kind reflect.Kind) EndpointDeclaration
 	// Attach a request body doc.
 	// `schema` will be used in the documentation, and `object` will be used for reading the body automatically.
 	RequestBody(description string, required bool, schema interface{}, object interface{}) EndpointDeclaration
@@ -469,11 +470,23 @@ func (e *endpointObject) parseRequest(data *Data) error {
 		case reflect.String:
 			return item, nil
 		case reflect.Int:
-			return strconv.Atoi(item)
+			if i, err := strconv.Atoi(item); err != nil {
+				return nil, newParameterTypeError(param.Parameter, "int", item)
+			} else {
+				return i, nil
+			}
 		case reflect.Float64:
-			return strconv.ParseFloat(item, 64)
+			if i, err := strconv.ParseFloat(item, 64); err != nil {
+				return nil, newParameterTypeError(param.Parameter, "float", item)
+			} else {
+				return i, nil
+			}
 		case reflect.Bool:
-			return strconv.ParseBool(item)
+			if i, err := strconv.ParseBool(item); err != nil {
+				return nil, newParameterTypeError(param.Parameter, "bool", item)
+			} else {
+				return i, nil
+			}
 		default:
 			return nil, errors.New("bad reflection type for converting parameter from string")
 		}
