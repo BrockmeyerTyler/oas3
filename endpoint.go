@@ -51,7 +51,7 @@ type Endpoint interface {
 	// Return the method, path, and version of this endpoint (documentation that is not contained in Doc())
 	Settings() (method, path string, version int)
 	// Return the security requirements mapped to their corresponding security schemes.
-	SecurityMapping() []map[*oasm.SecurityRequirement]oasm.SecurityScheme
+	SecurityMapping() []map[string]oasm.SecurityScheme
 	// The function that was defined by the user via Define()
 	UserDefinedFunc(Data) (interface{}, error)
 	// HTTP handler for the endpoint.
@@ -335,12 +335,12 @@ func (e *endpointObject) Settings() (method, path string, version int) {
 	return e.method, e.path, e.version
 }
 
-func (e *endpointObject) SecurityMapping() []map[*oasm.SecurityRequirement]oasm.SecurityScheme {
-	schemes := make([]map[*oasm.SecurityRequirement]oasm.SecurityScheme, 4)
+func (e *endpointObject) SecurityMapping() []map[string]oasm.SecurityScheme {
+	schemes := make([]map[string]oasm.SecurityScheme, 4)
 	if e.spec.doc.Security != nil {
 		security := e.spec.doc.Security
 		for i, s := range e.spec.doc.Security {
-			m := make(map[*oasm.SecurityRequirement]oasm.SecurityScheme)
+			m := make(map[string]oasm.SecurityScheme)
 			for name := range s {
 				m[&security[i]] = e.spec.doc.Components.SecuritySchemes[name]
 			}
@@ -350,7 +350,7 @@ func (e *endpointObject) SecurityMapping() []map[*oasm.SecurityRequirement]oasm.
 	if e.doc.Security != nil {
 		security := e.doc.Security
 		for i, s := range e.doc.Security {
-			m := make(map[*oasm.SecurityRequirement]oasm.SecurityScheme)
+			m := make(map[string]oasm.SecurityScheme)
 			for name := range s {
 				m[&security[i]] = e.spec.doc.Components.SecuritySchemes[name]
 			}
