@@ -336,7 +336,7 @@ func (e *endpointObject) Settings() (method, path string, version int) {
 }
 
 func (e *endpointObject) SecurityMapping() []map[string]oasm.SecurityScheme {
-	schemes := make([]map[string]oasm.SecurityScheme, 4)
+	schemes := make([]map[string]oasm.SecurityScheme, 0, 2)
 	if e.spec.doc.Security != nil {
 		for _, s := range e.spec.doc.Security {
 			m := make(map[string]oasm.SecurityScheme)
@@ -436,6 +436,7 @@ func (e *endpointObject) Call(w http.ResponseWriter, r *http.Request) {
 			b = []byte("Internal Server Error")
 		}
 
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(res.Status)
 		if _, err = w.Write(b); err != nil {
 			e.printError(errors.WithMessage(err, "error occurred while writing the response body"))
