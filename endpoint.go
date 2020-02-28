@@ -338,21 +338,19 @@ func (e *endpointObject) Settings() (method, path string, version int) {
 func (e *endpointObject) SecurityMapping() []map[string]oasm.SecurityScheme {
 	schemes := make([]map[string]oasm.SecurityScheme, 4)
 	if e.spec.doc.Security != nil {
-		security := e.spec.doc.Security
-		for i, s := range e.spec.doc.Security {
+		for _, s := range e.spec.doc.Security {
 			m := make(map[string]oasm.SecurityScheme)
 			for name := range s {
-				m[&security[i]] = e.spec.doc.Components.SecuritySchemes[name]
+				m[name] = e.spec.doc.Components.SecuritySchemes[name]
 			}
 			schemes = append(schemes, m)
 		}
 	}
 	if e.doc.Security != nil {
-		security := e.doc.Security
-		for i, s := range e.doc.Security {
+		for _, s := range e.doc.Security {
 			m := make(map[string]oasm.SecurityScheme)
 			for name := range s {
-				m[&security[i]] = e.spec.doc.Components.SecuritySchemes[name]
+				m[name] = e.spec.doc.Components.SecuritySchemes[name]
 			}
 			schemes = append(schemes, m)
 		}
