@@ -33,7 +33,7 @@ type EndpointDeclaration interface {
 	// Deprecate this endpoint.
 	Deprecate(comment string) EndpointDeclaration
 	// Attach a security doc.
-	Security(name string, scopes []string) EndpointDeclaration
+	Security(nameToScopesMapping map[string][]string) EndpointDeclaration
 	// Attach a function to run when calling this endpoint.
 	// This should be the final function called when declaring an endpoint.
 	// This will also create a large amount of metadata to be used when parsing a request.
@@ -51,7 +51,7 @@ type Endpoint interface {
 	// Return the method, path, and version of this endpoint (documentation that is not contained in Doc())
 	Settings() (method, path string, version int)
 	// Return the security requirements mapped to their corresponding security schemes.
-	SecurityMapping() map[*oasm.SecurityRequirement]oasm.SecurityScheme
+	SecurityMapping() []map[*oasm.SecurityRequirement]oasm.SecurityScheme
 	// The function that was defined by the user via Define()
 	UserDefinedFunc(Data) (interface{}, error)
 	// HTTP handler for the endpoint.
@@ -209,11 +209,8 @@ func (e *endpointObject) Deprecate(comment string) EndpointDeclaration {
 	return e
 }
 
-func (e *endpointObject) Security(name string, scopes []string) EndpointDeclaration {
-	e.doc.Security = append(e.doc.Security, oasm.SecurityRequirement{
-		Name:   name,
-		Scopes: scopes,
-	})
+func (e *endpointObject) Security(nameToScopesMapping map[string][]string) EndpointDeclaration {
+	e.doc.Security = append(e.doc.Security, nameToScopesMapping)
 	return e
 }
 
@@ -338,17 +335,27 @@ func (e *endpointObject) Settings() (method, path string, version int) {
 	return e.method, e.path, e.version
 }
 
-func (e *endpointObject) SecurityMapping() map[*oasm.SecurityRequirement]oasm.SecurityScheme {
-	schemes := make(map[*oasm.SecurityRequirement]oasm.SecurityScheme)
+func (e *endpointObject) SecurityMapping() []map[*oasm.SecurityRequirement]oasm.SecurityScheme {
+	schemes := make([]map[*oasm.SecurityRequirement]oasm.SecurityScheme, 4)
 	if e.spec.doc.Security != nil {
 		security := e.spec.doc.Security
-		for i := range e.spec.doc.Security {
-			schemes[&security[i]] = e.spec.doc.Components.SecuritySchemes[security[i].Name]
+		for i, s := range e.spec.doc.Security {
+			m := make(map[*oasm.SecurityRequirement]oasm.SecurityScheme)
+			for name := range s {
+				m[&security[i]] = e.spec.doc.Components.SecuritySchemes[name]
+			}
+			schemes = append(schemes, m)
 		}
 	}
-	security := e.doc.Security
-	for i := range e.doc.Security {
-		schemes[&security[i]] = e.spec.doc.Components.SecuritySchemes[security[i].Name]
+	if e.doc.Security != nil {
+		security := e.doc.Security
+		for i, s := range e.doc.Security {
+			m := make(map[*oasm.SecurityRequirement]oasm.SecurityScheme)
+			for name := range s {
+				m[&security[i]] = e.spec.doc.Components.SecuritySchemes[name]
+			}
+			schemes = append(schemes, m)
+		}
 	}
 	return schemes
 }
