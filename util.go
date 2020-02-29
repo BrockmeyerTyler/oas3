@@ -1,6 +1,7 @@
 package oas
 
 import (
+	"context"
 	"net/http"
 )
 
@@ -28,6 +29,16 @@ func ArrayOf(itemsSchema interface{}) interface{} {
 	}
 }
 
+// Adds the endpoint into the request context for other middleware to consume.
+func EndpointAttachingMiddleware(endpoint Endpoint) func(handler http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r = r.WithContext(context.WithValue(r.Context(), "endpoint", endpoint))
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func refNameToSwaggerRef(ref string) string {
 	return "#/components/schemas/" + ref
 }
@@ -40,7 +51,6 @@ func NewData(w http.ResponseWriter, r *http.Request, e Endpoint) Data {
 		Params:    make(MapAny),
 		Headers:   make(MapAny),
 		Endpoint:  e,
-		Extra:     make(MapAny),
 	}
 }
 
@@ -61,8 +71,6 @@ type Data struct {
 	Body interface{}
 	// The endpoint which was called.
 	Endpoint Endpoint
-	// A place to attach any kind of data using middleware.
-	Extra MapAny
 }
 
 type Response struct {

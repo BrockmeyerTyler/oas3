@@ -13,10 +13,6 @@ type endpoint struct {
 	function oas.HandlerFunc
 }
 
-func (e *endpoint) Option(string, interface{}) oas.EndpointDeclaration {
-	return e
-}
-
 func (e *endpoint) Version(int) oas.EndpointDeclaration {
 	return e
 }
@@ -53,10 +49,6 @@ func (e *endpoint) MustDefine(f oas.HandlerFunc) oas.Endpoint {
 
 func (e *endpoint) Doc() *oasm.Operation {
 	return &e.doc
-}
-
-func (e *endpoint) Options() map[string]interface{} {
-	return map[string]interface{}{}
 }
 
 func (e *endpoint) Settings() (method, path string, version int) {

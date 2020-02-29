@@ -16,9 +16,6 @@ import (
 )
 
 type EndpointDeclaration interface {
-	// Add some options to the endpoint.
-	// These can be processed by custom middleware via the Endpoint.Options map.
-	Option(string, interface{}) EndpointDeclaration
 	// Set the version of this endpoint, updating the path to correspond to it
 	Version(int) EndpointDeclaration
 	// Attach a parameter doc.
@@ -46,8 +43,6 @@ type EndpointDeclaration interface {
 type Endpoint interface {
 	// The operation documentation.
 	Doc() *oasm.Operation
-	// Options that can be read by middleware to add items to the request data before it gets to this endpoint.
-	Options() map[string]interface{}
 	// Return the method, path, and version of this endpoint (documentation that is not contained in Doc())
 	Settings() (method, path string, version int)
 	// Return the security requirements mapped to their corresponding security schemes.
@@ -59,18 +54,17 @@ type Endpoint interface {
 }
 
 type endpointObject struct {
-	doc     oasm.Operation
-	options map[string]interface{}
-	err     error
+	doc oasm.Operation
+	err error
 
 	path    string
 	method  string
 	version int
 
-	userDefinedFunc  HandlerFunc
-	fullyWrappedFunc HandlerFunc
-	spec             *openAPI
-	parsedPath       map[string]int
+	userDefinedFunc     HandlerFunc
+	fullyWrappedHandler http.Handler
+	spec                *openAPI
+	parsedPath          map[string]int
 
 	bodyType       reflect.Type
 	bodyJsonSchema json.RawMessage
@@ -87,11 +81,6 @@ type typedParameter struct {
 	kind       reflect.Kind
 	jsonSchema json.RawMessage
 	oasm.Parameter
-}
-
-func (e *endpointObject) Option(key string, value interface{}) EndpointDeclaration {
-	e.options[key] = value
-	return e
 }
 
 func (e *endpointObject) Version(version int) EndpointDeclaration {
@@ -309,26 +298,12 @@ func (e *endpointObject) Define(f HandlerFunc) (Endpoint, error) {
 		spec.doc.Paths[epPath] = pathItem
 	}
 	pathItem.Methods[method] = *doc
-	handler := e.UserDefinedFunc
-	if e.userDefinedFunc != nil {
-		handler = e.userDefinedFunc
-	}
-	if spec.middleware != nil {
-		for i := len(spec.middleware) - 1; i >= 0; i-- {
-			handler = spec.middleware[i](handler)
-		}
-	}
-	spec.routeCreator(method, epPath, http.HandlerFunc(e.Call))
-	e.fullyWrappedFunc = handler
+	spec.routeCreator(e, http.HandlerFunc(e.Call))
 	return e, nil
 }
 
 func (e *endpointObject) Doc() *oasm.Operation {
 	return &e.doc
-}
-
-func (e *endpointObject) Options() map[string]interface{} {
-	return e.options
 }
 
 func (e *endpointObject) Settings() (method, path string, version int) {
@@ -358,7 +333,15 @@ func (e *endpointObject) SecurityMapping() []map[string]oasm.SecurityScheme {
 	return schemes
 }
 
-func (e *endpointObject) UserDefinedFunc(d Data) (interface{}, error) {
+func (e *endpointObject) UserDefinedFunc(d Data) (i interface{}, err error) {
+	defer func() {
+		panicErr := recover()
+		if panicErr != nil {
+			err = fmt.Errorf("a fatal error occurred: %v", panicErr)
+			log.Printf("endpoint panic (%s %s): %s\n", e.method, e.path, panicErr)
+			debug.PrintStack()
+		}
+	}()
 	if e.userDefinedFunc != nil {
 		return e.userDefinedFunc(d)
 	}
@@ -374,7 +357,7 @@ func (e *endpointObject) Call(w http.ResponseWriter, r *http.Request) {
 
 	endpointError := e.parseRequest(&data)
 	if endpointError == nil {
-		output, endpointError = e.runUserDefinedFunc(data)
+		output, endpointError = e.UserDefinedFunc(data)
 	}
 
 	if endpointError != nil {
@@ -583,18 +566,6 @@ func (e *endpointObject) parseRequest(data *Data) error {
 		}
 	}
 	return nil
-}
-
-func (e *endpointObject) runUserDefinedFunc(data Data) (res interface{}, err error) {
-	defer func() {
-		panicErr := recover()
-		if panicErr != nil {
-			err = fmt.Errorf("a fatal error occurred: %v", panicErr)
-			log.Printf("endpoint panic (%s %s): %s\n", e.method, e.path, panicErr)
-			debug.PrintStack()
-		}
-	}()
-	return e.fullyWrappedFunc(data)
 }
 
 func (e *endpointObject) printError(err error) {

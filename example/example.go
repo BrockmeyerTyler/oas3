@@ -20,12 +20,12 @@ type Result struct {
 func main() {
 
 	var (
-		address        = "localhost:5000"
+		address        = "localhost:5876"
 		r              = mux.NewRouter()
 		endpointRouter = r.PathPrefix("/api").Subrouter()
 	)
 
-	spec, fileServer := defineSpec(endpointRouter)
+	spec, fileServer := defineSpec(endpointRouter, address)
 	defineEndpoints(spec)
 
 	// Save the spec.
@@ -43,26 +43,31 @@ func main() {
 	log.Fatal(http.ListenAndServe(address, r))
 }
 
-func defineSpec(endpointRouter *mux.Router) (oas.OpenAPI, http.Handler) {
+func myAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		e := r.Context().Value("endpoint").(oas.Endpoint)
+		log.Println("hello, from myAuthMiddleware!: " + e.Doc().OperationId)
+		for _, mapping := range e.SecurityMapping() {
+			log.Println("security requirement:")
+			for name, scheme := range mapping {
+				log.Println(name, scheme.Type, scheme.Name)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func defineSpec(endpointRouter *mux.Router, address string) (oas.OpenAPI, http.Handler) {
 	spec, fileServer, err := oas.NewOpenAPI(
-		"API Title", "Description", "http://localhost:5000/api", "1.0.0", "./public", "schemas", []oasm.Tag{
+		"API Title", "Description", "http://"+address+"/api", "1.0.0", "./public", "schemas", []oasm.Tag{
 			{Name: "Tag1", Description: "This is the first tag."},
 			{Name: "Tag2", Description: "This is the second tag."},
-		}, func(method, path string, handler http.Handler) {
-			endpointRouter.Path(path).Methods(method).Handler(handler)
-		}, []oas.Middleware{
-			func(next oas.HandlerFunc) oas.HandlerFunc {
-				return func(data oas.Data) (response interface{}, e error) {
-					log.Println("This runs first")
-					return next(data)
-				}
-			},
-			func(next oas.HandlerFunc) oas.HandlerFunc {
-				return func(data oas.Data) (response interface{}, e error) {
-					log.Println("This runs second")
-					return next(data)
-				}
-			},
+		}, func(endpoint oas.Endpoint, handler http.Handler) {
+			method, path, _ := endpoint.Settings()
+			endpointRouter.Path(path).Methods(method).Name(endpoint.Doc().OperationId).Handler(
+				oas.EndpointAttachingMiddleware(endpoint)(
+					myAuthMiddleware(
+						handler)))
 		})
 	if err != nil {
 		panic(err)

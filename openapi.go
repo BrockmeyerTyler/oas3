@@ -23,7 +23,7 @@ var swaggerUrlRegex = regexp.MustCompile(`url: ?(".*?"|'.*?')`)
 
 type HandlerFunc func(Data) (interface{}, error)
 type Middleware func(next HandlerFunc) HandlerFunc
-type RouteCreator func(method, path string, handler http.Handler)
+type RouteCreator func(Endpoint, http.Handler)
 type ResponseAndErrorHandler func(Data, Response, error)
 
 type OpenAPI interface {
@@ -52,7 +52,6 @@ type openAPI struct {
 	basePathLength          int
 	validatorBuilder        vjsonschema.Builder
 	validator               vjsonschema.Validator
-	middleware              []Middleware
 	routeCreator            RouteCreator
 	endpoints               map[string]Endpoint
 }
@@ -68,18 +67,14 @@ type openAPI struct {
 //   - Add response handling middleware to every endpoint, for logging or other needs, after the endpoint has run.
 //
 // Parameters:
-//   title           - API title
-//   description     - API description
-//   url             - API URL location
-//   version         - API version in the format of (MAJOR.MINOR.PATCH)
-//   dir             - A directory for hosting the spec, schemas, and SwaggerUI - typically a folder like ./public
-//   schemasDir      - A path to a directory of valid JSON Schemas for objects to be used by the API
-//   tags            - A list of Tag objects for describing the sections of the API which hold endpoints
-//   endpoints       - A list of Endpoints that have been created for this API
-//   routeCreator    - A function which can mount an endpoint at an http path
-//   middleware      - A list of EndpointMiddleware functions to be run before each endpoint when they are called
-//                     * Useful for authorization, header pre-processing, and more.
-//                     * Use `nil` or an empty list to have no middleware.
+//   title        - API title
+//   description  - API description
+//   serverUrl    - API URL location
+//   version      - API version in the format of (MAJOR.MINOR.PATCH)
+//   dir          - A directory for hosting the spec, schemas, and SwaggerUI - typically a folder like ./public
+//   schemasDir   - A path to a directory of valid JSON Schemas for objects to be used by the API
+//   tags         - A list of Tag objects for describing the sections of the API which hold endpoints
+//   routeCreator - A function which can add middleware and mount an endpoint at an http path
 //
 // Returns:
 //   spec       - The specification object
@@ -88,7 +83,6 @@ type openAPI struct {
 func NewOpenAPI(
 	title, description, serverUrl, version, dir, schemasDir string,
 	tags []oasm.Tag, routeCreator RouteCreator,
-	middleware []Middleware,
 ) (spec OpenAPI, fileServer http.Handler, err error) {
 	o := &openAPI{
 		doc: oasm.OpenAPIDoc{
@@ -109,7 +103,6 @@ func NewOpenAPI(
 		jsonIndent:       2,
 		dir:              dir,
 		validatorBuilder: vjsonschema.NewBuilder(),
-		middleware:       middleware,
 		routeCreator:     routeCreator,
 		endpoints:        make(map[string]Endpoint),
 	}
@@ -197,7 +190,6 @@ func (o *openAPI) NewEndpoint(operationId, method, path, summary, description st
 			},
 			Security: make([]oasm.SecurityRequirement, 0, 1),
 		},
-		options:            make(map[string]interface{}, 3),
 		path:               path,
 		method:             strings.ToLower(method),
 		parsedPath:         parsedPath,
