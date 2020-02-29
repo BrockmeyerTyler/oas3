@@ -2,7 +2,10 @@ package oas
 
 import (
 	"context"
+	"encoding/json"
+	"log"
 	"net/http"
+	"strings"
 )
 
 const (
@@ -92,4 +95,30 @@ func (m MapAny) GetOrElse(key string, elseValue interface{}) interface{} {
 		return item
 	}
 	return elseValue
+}
+
+type customFileServer struct {
+	dir        http.Dir
+	fileServer http.Handler
+	o          *openAPI
+	cachedSpec []byte
+}
+
+func (s *customFileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.cachedSpec == nil || len(s.cachedSpec) == 0 {
+		var err error
+		s.cachedSpec, err = json.Marshal(s.o.doc)
+		if err != nil {
+			w.WriteHeader(500)
+			log.Println("unable to parse openapi spec into json")
+			return
+		}
+	}
+	path := r.URL.Path
+	if strings.HasSuffix(path, "openapi.json") {
+		w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+		_, _ = w.Write(s.cachedSpec)
+		return
+	}
+	s.fileServer.ServeHTTP(w, r)
 }

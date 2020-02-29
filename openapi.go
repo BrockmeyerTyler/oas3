@@ -2,15 +2,11 @@ package oas
 
 import (
 	"encoding/json"
-	"fmt"
-	copy2 "github.com/otiai10/copy"
 	"github.com/pkg/errors"
 	"github.com/tjbrockmeyer/oasm"
 	"github.com/tjbrockmeyer/vjsonschema"
-	"io/ioutil"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"regexp"
 	"runtime"
@@ -40,20 +36,18 @@ type OpenAPI interface {
 	NewEndpoint(operationId, method, path, summary, description string, tags []string) EndpointDeclaration
 	// Get all endpoints mapped by their operation ids.
 	Endpoints() map[string]Endpoint
-	// Save the spec into the directory
-	Save() error
 }
 
 type openAPI struct {
 	doc                     oasm.OpenAPIDoc
 	jsonIndent              int
 	responseAndErrorHandler ResponseAndErrorHandler
-	dir                     string
 	basePathLength          int
 	validatorBuilder        vjsonschema.Builder
 	validator               vjsonschema.Validator
 	routeCreator            RouteCreator
 	endpoints               map[string]Endpoint
+	fileServer              *customFileServer
 }
 
 // Create a new OpenAPI Specification with JSON Schemas and a Swagger UI.
@@ -81,7 +75,7 @@ type openAPI struct {
 //   fileServer - The fileServer http.Handler that can be mounted to show a Swagger UI for the API
 //   err        - Any error that may have occurred
 func NewOpenAPI(
-	title, description, serverUrl, version, dir, schemasDir string,
+	title, description, serverUrl, version, schemasDir string,
 	tags []oasm.Tag, routeCreator RouteCreator,
 ) (spec OpenAPI, fileServer http.Handler, err error) {
 	o := &openAPI{
@@ -101,15 +95,10 @@ func NewOpenAPI(
 			Components: oasm.Components{},
 		},
 		jsonIndent:       2,
-		dir:              dir,
 		validatorBuilder: vjsonschema.NewBuilder(),
 		routeCreator:     routeCreator,
 		endpoints:        make(map[string]Endpoint),
 	}
-	if err := os.MkdirAll(dir, os.ModePerm); err != nil && !os.IsExist(err) {
-		return nil, nil, err
-	}
-
 	if parsedUrl, err := url.Parse(serverUrl); err != nil {
 		return nil, nil, err
 	} else {
@@ -131,26 +120,18 @@ func NewOpenAPI(
 		o.doc.Components.Schemas[k] = json.RawMessage(vjsonschema.SchemaRefReplace(s, refNameToSwaggerRef))
 	}
 
-	// Create Swagger UI
 	_, filePath, _, ok := runtime.Caller(0)
 	if !ok {
 		return nil, nil, err
 	}
-	if err = copy2.Copy(path.Join(path.Dir(filePath), "swagger-dist"), o.dir); err != nil {
-		return nil, nil, fmt.Errorf("failed to copy swagger ui distribution: %v", err)
+	swaggerDist := path.Join(path.Dir(filePath), "swagger-dist")
+	d := http.Dir(swaggerDist)
+	fileServer = &customFileServer{
+		dir:        d,
+		fileServer: http.FileServer(d),
+		o:          o,
 	}
-	indexHtml := fmt.Sprintf("%s/index.html", o.dir)
-	if contents, err := ioutil.ReadFile(indexHtml); err != nil {
-		return nil, nil, fmt.Errorf("could not open 'index.html' in swagger directory: %s", err.Error())
-	} else {
-		newContents := swaggerUrlRegex.ReplaceAllLiteral(contents, []byte(fmt.Sprintf(`url: "./%s"`, specPath)))
-		err := ioutil.WriteFile(indexHtml, newContents, 644)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	return o, http.FileServer(http.Dir(o.dir)), nil
+	return o, fileServer, nil
 }
 
 func (o *openAPI) Doc() *oasm.OpenAPIDoc {
@@ -213,12 +194,8 @@ func (o *openAPI) Endpoints() map[string]Endpoint {
 	return o.endpoints
 }
 
-func (o *openAPI) Save() error {
-	if b, err := json.Marshal(o.doc); err != nil {
-		return errors.WithMessage(err, "could not marshal Open API 3 spec: %s")
-	} else if err = ioutil.WriteFile(path.Join(o.dir, specPath), b, 0644); err != nil {
-		return fmt.Errorf("could not write Open API 3 spec to %s: %s", o.dir, err.Error())
-	} else if o.validator, err = o.validatorBuilder.Compile(); err != nil {
+func (o *openAPI) buildValidator() (err error) {
+	if o.validator, err = o.validatorBuilder.Compile(); err != nil {
 		return errors.WithMessage(err, "could not compile jsonschema validator")
 	}
 	return nil

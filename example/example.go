@@ -28,12 +28,6 @@ func main() {
 	spec, fileServer := defineSpec(endpointRouter, address)
 	defineEndpoints(spec)
 
-	// Save the spec.
-	err := spec.Save()
-	if err != nil {
-		panic(err)
-	}
-
 	// Mount the file server at the desired URL.
 	endpointRouter.Path("/docs").Handler(http.RedirectHandler("/api/docs/", http.StatusMovedPermanently))
 	endpointRouter.PathPrefix("/docs/").Handler(http.StripPrefix("/api/docs/", fileServer))
@@ -59,7 +53,7 @@ func myAuthMiddleware(next http.Handler) http.Handler {
 
 func defineSpec(endpointRouter *mux.Router, address string) (oas.OpenAPI, http.Handler) {
 	spec, fileServer, err := oas.NewOpenAPI(
-		"API Title", "Description", "http://"+address+"/api", "1.0.0", "./public", "schemas", []oasm.Tag{
+		"API Title", "Description", "http://"+address+"/api", "1.0.0", "schemas", []oasm.Tag{
 			{Name: "Tag1", Description: "This is the first tag."},
 			{Name: "Tag2", Description: "This is the second tag."},
 		}, func(endpoint oas.Endpoint, handler http.Handler) {

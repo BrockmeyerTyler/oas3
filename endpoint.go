@@ -286,8 +286,11 @@ func (e *endpointObject) Define(f HandlerFunc) (Endpoint, error) {
 	if err != nil {
 		return nil, errors.WithMessage(err, "failed to marshal data schema for: "+e.doc.OperationId)
 	}
-	if err := e.spec.validatorBuilder.AddSchema(e.reqSchemaName, dataSchemaBytes); err != nil {
+	if err = e.spec.validatorBuilder.AddSchema(e.reqSchemaName, dataSchemaBytes); err != nil {
 		return nil, errors.WithMessage(err, "failed to add/parse data schema for: "+e.doc.OperationId)
+	}
+	if err = e.spec.buildValidator(); err != nil {
+		return nil, err
 	}
 
 	// Create routes and docs for all endpoints
