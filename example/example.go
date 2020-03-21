@@ -58,6 +58,7 @@ func defineSpec(endpointRouter *mux.Router, address string) (oas.OpenAPI, http.H
 			{Name: "Tag2", Description: "This is the second tag."},
 		}, func(endpoint oas.Endpoint, handler http.Handler) {
 			method, path, _ := endpoint.Settings()
+			log.Println(method, path)
 			endpointRouter.Path(path).Methods(method).Name(endpoint.Doc().OperationId).Handler(
 				oas.EndpointAttachingMiddleware(endpoint)(
 					myAuthMiddleware(
@@ -69,6 +70,9 @@ func defineSpec(endpointRouter *mux.Router, address string) (oas.OpenAPI, http.H
 
 	// Make any changes desired to the spec.
 	spec.SetResponseAndErrorHandler(func(data oas.Data, response oas.Response, e error) {
+		if e != nil {
+			log.Println("error: ", e)
+		}
 		method, path, version := data.Endpoint.Settings()
 		log.Println(method, path, version, "| response:", response.Status)
 	})
@@ -118,5 +122,12 @@ func defineEndpoints(spec oas.OpenAPI) {
 		Response(201, "Created/Updated", nil).
 		MustDefine(func(data oas.Data) (interface{}, error) {
 			return json.RawMessage(fmt.Sprintf(`"put item: '%s'"`, data.Params["item"])), nil
+		})
+
+	spec.NewEndpoint("postAbc", "POST", "/series/{id}/abc/{path:.*}", "Create an ABC", "", []string{"Tag2"}).
+		Parameter("path", "id", "id", true, intSchema, reflect.Int).
+		Parameter("path", "path", "Path to the abc in the series", true, strSchema, reflect.String).
+		MustDefine(func(data oas.Data) (interface{}, error) {
+			return data.Params.GetOrElse("path", "no path").(string), nil
 		})
 }

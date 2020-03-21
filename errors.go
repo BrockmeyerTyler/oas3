@@ -30,11 +30,11 @@ func newJSONValidationError(result *gojsonschema.Result) jsonValidationError {
 	}
 }
 
-func newParameterTypeError(param oasm.Parameter, received, expectedType string) jsonValidationError {
+func newParameterTypeError(param oasm.Parameter, expectedType, found string) jsonValidationError {
 	return jsonValidationError{
 		Type: "ParameterTypeError",
 		Errors: []string{
-			fmt.Sprintf("%s.%s: expected (%s) to be convertible to type %s", param.In, param.Name, received, expectedType),
+			fmt.Sprintf("%s.%s: expected (%s) to be convertible to type %s", param.In, param.Name, found, expectedType),
 		},
 	}
 }

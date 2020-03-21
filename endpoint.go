@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"reflect"
+	"regexp"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -57,9 +58,11 @@ type endpointObject struct {
 	doc oasm.Operation
 	err error
 
-	path    string
-	method  string
-	version int
+	path        string
+	swaggerPath string
+	method      string
+	version     int
+	regexPath   *regexp.Regexp
 
 	userDefinedFunc     HandlerFunc
 	fullyWrappedHandler http.Handler
@@ -87,9 +90,11 @@ func (e *endpointObject) Version(version int) EndpointDeclaration {
 	if version <= 0 || e.version != 0 {
 		return e
 	}
-	e.doc.OperationId += fmt.Sprintf("_v%v", version)
-	e.path = fmt.Sprintf("/v%v", version) + e.path
+	v := fmt.Sprintf("/v%v", version)
 	e.version = version
+	e.doc.OperationId += v
+	e.path = v + e.path
+	e.parsePath()
 	return e
 }
 
@@ -143,7 +148,7 @@ func (e *endpointObject) RequestBody(description string, required bool, schema, 
 		e.err = errors.WithMessage(err, "failed to marshal request body schema: "+e.doc.OperationId)
 		return e
 	}
-	e.bodyJsonSchema = json.RawMessage(b)
+	e.bodyJsonSchema = b
 	schema = json.RawMessage(vjsonschema.SchemaRefReplace(b, refNameToSwaggerRef))
 
 	e.bodyType = reflect.TypeOf(object)
@@ -218,7 +223,6 @@ func (e *endpointObject) Define(f HandlerFunc) (Endpoint, error) {
 	var err error
 
 	spec := e.spec
-	method, epPath, _ := e.Settings()
 
 	e.userDefinedFunc = f
 
@@ -294,13 +298,13 @@ func (e *endpointObject) Define(f HandlerFunc) (Endpoint, error) {
 	}
 
 	// Create routes and docs for all endpoints
-	pathItem, ok := spec.doc.Paths[epPath]
+	pathItem, ok := spec.doc.Paths[e.swaggerPath]
 	if !ok {
 		pathItem = oasm.PathItem{
 			Methods: make(map[string]oasm.Operation)}
-		spec.doc.Paths[epPath] = pathItem
+		spec.doc.Paths[e.swaggerPath] = pathItem
 	}
-	pathItem.Methods[method] = *doc
+	pathItem.Methods[e.method] = *doc
 	spec.routeCreator(e, http.HandlerFunc(e.Call))
 	return e, nil
 }
@@ -311,6 +315,10 @@ func (e *endpointObject) Doc() *oasm.Operation {
 
 func (e *endpointObject) Settings() (method, path string, version int) {
 	return e.method, e.path, e.version
+}
+
+func (e *endpointObject) RegexPath() *regexp.Regexp {
+	return e.regexPath
 }
 
 func (e *endpointObject) SecurityMapping() []map[string]oasm.SecurityScheme {
@@ -341,7 +349,7 @@ func (e *endpointObject) UserDefinedFunc(d Data) (i interface{}, err error) {
 		panicErr := recover()
 		if panicErr != nil {
 			err = fmt.Errorf("a fatal error occurred: %v", panicErr)
-			log.Printf("endpoint panic (%s %s): %s\n", e.method, e.path, panicErr)
+			log.Printf("endpoint panic (%s %s): %s\n", e.method, e.swaggerPath, panicErr)
 			debug.PrintStack()
 		}
 	}()
@@ -510,16 +518,11 @@ func (e *endpointObject) parseRequest(data *Data) error {
 	}
 
 	if len(e.params) > 0 {
-		basePathLength := e.spec.basePathLength
-		if e.version != 0 {
-			basePathLength += 1
-		}
-		splitPath := strings.Split(data.Req.URL.Path, "/")
+		log.Println(e.regexPath.String(), e.params)
+		subMatches := e.regexPath.FindStringSubmatch(data.Req.URL.Path)
+		log.Println(e.path, subMatches, e.regexPath.String(), data.Req.URL.Path)
 		for loc, param := range e.params {
-			if len(splitPath) <= loc {
-				continue
-			}
-			data.Params[param.Name], err = convertParamType(param, splitPath[basePathLength+loc])
+			data.Params[param.Name], err = convertParamType(param, subMatches[loc])
 			if err != nil {
 				return errors.WithMessage(err, "failed to convert path parameter "+param.Name)
 			}
@@ -573,4 +576,39 @@ func (e *endpointObject) parseRequest(data *Data) error {
 
 func (e *endpointObject) printError(err error) {
 	log.Printf("endpoint error (%s): %v\n", e.doc.OperationId, err)
+}
+
+func (e *endpointObject) parsePath() {
+	var (
+		newSwaggerPath = ""
+		parsedPath     = make(map[string]int)
+
+		pathComparison = ""
+		pathRegexStr   = e.spec.url.Path
+		pathParamIndex int
+	)
+	for _, subMatch := range pathRegex.FindAllStringSubmatch(e.path, -1) {
+		pathComparison += subMatch[0]
+		if subMatch[1] != "" {
+			newSwaggerPath += "/{" + subMatch[1] + "}"
+			pathParamIndex++
+			parsedPath[subMatch[1]] = pathParamIndex
+			if subMatch[2] != "" {
+				pathRegexStr += "/(" + subMatch[2] + ")"
+			} else {
+				pathRegexStr += "/([^/]+)"
+			}
+		} else {
+			newSwaggerPath += subMatch[0]
+			pathRegexStr += subMatch[0]
+		}
+	}
+	e.regexPath, e.err = regexp.Compile(pathRegexStr)
+	if pathComparison != e.path {
+		e.err = errors.New("endpoint path does not match the required format:\n" +
+			e.path + "\n" + pathComparison + "\n" +
+			"(ex: /abc/123/{id}/{other:[reg]*exp?} )")
+	}
+	e.swaggerPath = newSwaggerPath
+	e.parsedPath = parsedPath
 }

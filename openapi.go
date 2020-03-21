@@ -13,9 +13,7 @@ import (
 	"strings"
 )
 
-var specPath = "openapi.json"
-var refRegex = regexp.MustCompile(`"\$ref"\s*:\s*"file:/[^"]*/(.*?)\.json"`)
-var swaggerUrlRegex = regexp.MustCompile(`url: ?(".*?"|'.*?')`)
+var pathRegex = regexp.MustCompile(`/(?:[^{][^/]*|{(\w+)(?::(.*?[^\\]))?})`)
 
 type HandlerFunc func(Data) (interface{}, error)
 type Middleware func(next HandlerFunc) HandlerFunc
@@ -42,12 +40,12 @@ type openAPI struct {
 	doc                     oasm.OpenAPIDoc
 	jsonIndent              int
 	responseAndErrorHandler ResponseAndErrorHandler
-	basePathLength          int
 	validatorBuilder        vjsonschema.Builder
 	validator               vjsonschema.Validator
 	routeCreator            RouteCreator
 	endpoints               map[string]Endpoint
 	fileServer              *customFileServer
+	url                     *url.URL
 }
 
 // Create a new OpenAPI Specification with JSON Schemas and a Swagger UI.
@@ -102,11 +100,7 @@ func NewOpenAPI(
 	if parsedUrl, err := url.Parse(serverUrl); err != nil {
 		return nil, nil, err
 	} else {
-		for _, s := range strings.Split(parsedUrl.Path, "/") {
-			if len(s) > 0 {
-				o.basePathLength += 1
-			}
-		}
+		o.url = parsedUrl
 	}
 
 	if err := o.validatorBuilder.AddDir(schemasDir); err != nil {
@@ -151,14 +145,6 @@ func (o *openAPI) SetResponseAndErrorHandler(reh ResponseAndErrorHandler) {
 }
 
 func (o *openAPI) NewEndpoint(operationId, method, path, summary, description string, tags []string) EndpointDeclaration {
-	parsedPath := make(map[string]int)
-	pathParamRegex := regexp.MustCompile(`{[^/]+}`)
-	splitPath := strings.Split(path, "/")
-	for i, s := range splitPath {
-		if pathParamRegex.MatchString(s) {
-			parsedPath[s[1:len(s)-1]] = i
-		}
-	}
 	e := &endpointObject{
 		doc: oasm.Operation{
 			Tags:        tags,
@@ -173,7 +159,6 @@ func (o *openAPI) NewEndpoint(operationId, method, path, summary, description st
 		},
 		path:               path,
 		method:             strings.ToLower(method),
-		parsedPath:         parsedPath,
 		bodyType:           nil,
 		query:              make([]typedParameter, 0, 3),
 		params:             make(map[int]typedParameter, 3),
@@ -187,6 +172,7 @@ func (o *openAPI) NewEndpoint(operationId, method, path, summary, description st
 	} else {
 		o.endpoints[operationId] = e
 	}
+	e.parsePath()
 	return e
 }
 
