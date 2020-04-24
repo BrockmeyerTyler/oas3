@@ -19,6 +19,8 @@ import (
 type EndpointDeclaration interface {
 	// Set the version of this endpoint, updating the path to correspond to it
 	Version(int) EndpointDeclaration
+	// Set an arbitrary variable on this endpoint's Options object.
+	Set(key string, value interface{}) EndpointDeclaration
 	// Attach a parameter doc.
 	// Valid 'in's are query, path, and header.
 	// Valid 'kind's are String, Int, Float64, and Bool.
@@ -44,6 +46,8 @@ type EndpointDeclaration interface {
 type Endpoint interface {
 	// The operation documentation.
 	Doc() *oasm.Operation
+	// Return the value of an option created using Set()
+	Get(key string) interface{}
 	// Return the method, path, and version of this endpoint (documentation that is not contained in Doc())
 	Settings() (method, path string, version int)
 	// Return the security requirements mapped to their corresponding security schemes.
@@ -64,6 +68,7 @@ type endpointObject struct {
 	version     int
 	regexPath   *regexp.Regexp
 
+	options             map[string]interface{}
 	userDefinedFunc     HandlerFunc
 	fullyWrappedHandler http.Handler
 	spec                *openAPI
@@ -95,6 +100,11 @@ func (e *endpointObject) Version(version int) EndpointDeclaration {
 	e.doc.OperationId += v
 	e.path = v + e.path
 	e.parsePath()
+	return e
+}
+
+func (e *endpointObject) Set(key string, value interface{}) EndpointDeclaration {
+	e.options[key] = value
 	return e
 }
 
@@ -315,6 +325,10 @@ func (e *endpointObject) Doc() *oasm.Operation {
 
 func (e *endpointObject) Settings() (method, path string, version int) {
 	return e.method, e.path, e.version
+}
+
+func (e *endpointObject) Get(key string) interface{} {
+	return e.options[key]
 }
 
 func (e *endpointObject) RegexPath() *regexp.Regexp {
